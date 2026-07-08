@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⭐</text></svg>"
+    />
+    <title>Polytopia Clone</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="hud">
+        <div class="hud__group">
+          <span id="player-badge" class="badge"></span>
+          <span id="turn-label"></span>
+          <span id="stars-label"></span>
+        </div>
+        <div class="hud__group" id="train-buttons"></div>
+        <div class="hud__group">
+          <label class="seed">
+            Semilla
+            <input id="seed-input" type="number" value="42" />
+          </label>
+          <button id="new-game" type="button">Nueva partida</button>
+          <button id="end-turn" type="button" class="primary">Terminar turno</button>
+        </div>
+      </header>
+      <main class="board">
+        <canvas id="board-canvas"></canvas>
+      </main>
+      <footer id="status" class="status"></footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
