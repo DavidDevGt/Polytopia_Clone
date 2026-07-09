@@ -789,3 +789,43 @@ function frame(now: number): void {
 renderer.resize();
 newGame();
 requestAnimationFrame(frame);
+
+// ---------- E2E / debug hook ----------
+// Lets browser tests and screenshot scripts drive a real game without
+// simulating pointer gymnastics. Not part of the game's public surface.
+declare global {
+  interface Window {
+    __terranova?: {
+      readonly state: GameState;
+      dispatch: (action: Action) => boolean;
+      aiStep: () => boolean;
+      select: (unitId: number | null, cityId: number | null) => void;
+      centerOn: (tileIndex: number) => void;
+      tileScreen: (tileIndex: number) => { x: number; y: number };
+    };
+  }
+}
+
+window.__terranova = {
+  get state() {
+    return state;
+  },
+  dispatch,
+  aiStep: () => dispatch(nextAiAction(state)),
+  select(unitId, cityId) {
+    selectedUnitId = unitId;
+    selectedCityId = cityId;
+    updatePanels();
+  },
+  centerOn(tileIndex) {
+    renderer.centerOn(state, tileIndex);
+  },
+  tileScreen(tileIndex) {
+    const world = renderer.worldOfTile(state, tileIndex);
+    const cam = renderer.cameraInfo;
+    return {
+      x: (world.x - cam.x) * cam.zoom + canvas.clientWidth / 2,
+      y: (world.y - cam.y) * cam.zoom + canvas.clientHeight / 2,
+    };
+  },
+};
