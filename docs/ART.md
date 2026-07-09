@@ -1,0 +1,105 @@
+# Terranova — Guía de dirección de arte (v0.3)
+
+Identidad: **una maqueta de mesa iluminada al atardecer**. Un mundo cálido en
+miniatura — dioramas nítidos, materiales mate, una sola luz — leído desde una
+UI de cristal oscuro que desaparece cuando no se necesita. Inspiración en los
+principios (no en las formas) de Polytopia, Dorfromantik, Bad North, Islanders
+y Mini Motorways: claridad ante todo, pocas siluetas, mucha intención.
+
+La fuente de verdad ejecutable es `src/render/palette.ts`. Este documento
+explica el porqué.
+
+## 1. Luz
+
+- **Un solo sol, arriba a la izquierda.** Todo volumen ilumina su cara oeste
+  (`LIGHT_FACE = 0.78`) y sombrea la sureste (`DARK_FACE = 0.55`). Sin
+  excepciones: casas, montañas, torres y bloques de terreno comparten factores.
+- **Sombras de contacto**, no proyectadas: una elipse suave
+  (`rgba(20,24,38,0.28)`) bajo cada prop. Es el "ambient occlusion" del juego.
+- **Atmósfera en 3 capas**: gradiente de cielo (índigo → azul cálido), glow
+  cálido radial tras el tablero, y al final un wash `soft-light` naranja
+  (bloom/grading barato), bruma azulada en la base y viñeta al 30 %.
+
+## 2. Color
+
+- **Terreno saturado pero nunca neón**; las sombras son frías (derivan por
+  `shade()`, nunca a negro puro).
+- **Los colores de equipo son sagrados**: rojo/azul/oro/violeta solo aparecen
+  en cosas que un jugador posee (banderas, techos, bordes, unidades). El
+  terreno jamás los usa — así la lectura de propiedad es instantánea.
+- Primarios de mundo: pradera `#a4c964`→`#b5d16d`, bosque `#8db956`, roca
+  `#a9a4b5`, arena `#ecd9a0`, agua costera `#4fc0e8`, océano `#1d6fa6`.
+- UI: tinta `#0e1119`, cristal `rgba(18,21,34,0.82)` con blur, texto marfil
+  `#f0ede4`, acentos oro `#ffcf5c` (acción principal) y coral (peligro).
+
+## 3. Forma y escala
+
+- **Siluetas primero**: cada cosa debe reconocerse por contorno en 24 px.
+  Guerrero = escudo redondo; arquero = capucha+arco; jinete = caballo+lanza;
+  defensor = escudo de lágrima. Nada comparte silueta.
+- Diamante base 64×32, bloques extruidos 11 px. Props entre 0.5 y 1.5 tiles de
+  alto; solo capillas/capiteles superan el tile (foco visual merecido).
+- **Imperfección controlada**: todo prop toma jitter determinista de
+  `tileHash(index, salt)` — posición, tamaño, tono, nieve. Dos casillas nunca
+  se ven idénticas, y el mismo mapa siempre se ve igual (misma semilla, misma
+  imagen).
+
+## 4. Materiales y elementos
+
+- **Terreno**: tapa con variación de tono por hash + textura mínima (matas de
+  hierba, flores 12 %, motas de roca). Orillas con banda de **arena** donde la
+  tierra toca agua.
+- **Agua**: el material vivo. Ondas quadráticas a la deriva, destellos de sol
+  intermitentes, **espuma pulsante** pegada a la costa, océano hundido 5 px y
+  más oscuro que la costa.
+- **Montañas**: 2 picos por casilla (principal + secundario) con cara lit/
+  sombra, nieve opcional por hash, base integrada con sombra de contacto.
+- **Bosques**: 3–5 coníferas de dos capas con tronco, tamaños y posiciones
+  por hash, balanceo suave por viento (`sin(now/1100)`), claro implícito
+  (suelo sombreado).
+- **Ciudades que crecen**: plaza de tierra siempre; Nv1 2 casas → Nv2 3 casas
+  - murallas frontales → Nv3+ **torreón** con almenas y estandarte colgante;
+    capital = torreón alto con friso dorado y ★. Bandera ondeante en toda ciudad.
+- **Recursos como miniaturas**: árbol frutal cargado, res pastando, veta con
+  cristal que destella, banco de peces saltando dentro de anillos de agua.
+- **Niebla**: no negro plano — nubes en dos tonos (`fog1/fog2`) con billows
+  desplazados por hash y deriva lenta.
+
+## 5. Movimiento
+
+Regla: **nada aparece ni cambia instantáneamente.**
+
+- Unidades: bob idle senoidal, deslizamiento con ease-in-out al mover,
+  embestida con anticipación y follow-through al atacar, **flash blanco** al
+  recibir daño, pop `easeOutBack` al reclutar, estallido+anillo al morir.
+- Mundo: banderas al viento, copas balanceándose, agua y espuma pulsando,
+  destello del mineral. Cámara con easing y sacudida decreciente.
+- UI: todo entra con `--ease-pop` (spring corto); hover eleva 1 px; el botón
+  de turno irradia oro; log y paneles nunca "aparecen": nacen.
+
+## 6. Iconografía
+
+Familia única en SVG inline (`ICON` en `main.ts`): grid 24, trazo 2, puntas
+redondeadas, `currentColor`. Estrella (economía), espada (ataque), escudo
+(defensa), flecha (movimiento), diana (alcance), corazón (vida), personas
+(población), bandera (captura), casa (ciudad). Prohibido mezclar estilos.
+
+## 7. HUD
+
+- **Jerarquía**: (1) el mundo, (2) el botón dorado de turno, (3) la barra de
+  estado, (4) el inspector. Nada compite con el tablero: paneles de cristal
+  oscuro translúcido con blur que se funden con la escena.
+- El inspector es contextual: muestra solo lo tocado; los overlays (log,
+  minimapa, pronóstico) flotan sobre el mundo sin marcos opacos.
+- Victoria = **secuencia**, no modal: confeti, título con pop, mapa final
+  revelado, barras de estadísticas animadas por jugador, medallas (MVP,
+  Fundador, Conquistador) y cronología de hitos con entrada escalonada.
+
+## 8. Deudas asumidas (siguiente pase de arte)
+
+- Ríos con meandros y puentes → requieren soporte en `core` (hidrología en la
+  generación), no solo pintura.
+- Estructuras narrativas (faros, ruinas, molinos) → entrarán con las mejoras
+  de casilla del árbol tecnológico, para que cada edificio cuente una regla.
+- Animación de caminar por pasos (hoy es deslizamiento) y muerte con cuerpo
+  que cae (hoy partículas) → cuando haya sprites por dirección.

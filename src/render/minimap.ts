@@ -7,11 +7,11 @@ import type { GameState, Terrain } from '../core/types';
 import { playerColor, TILE_H, TILE_W } from './renderer';
 
 const MINI_COLORS: Record<Terrain, string> = {
-  field: '#6f9c43',
-  forest: '#4f7d3a',
-  mountain: '#8d95a3',
-  water: '#2f89b8',
-  ocean: '#1d5f88',
+  field: '#8db457',
+  forest: '#5c8c46',
+  mountain: '#9d99ab',
+  water: '#3f9fcc',
+  ocean: '#1d6491',
 };
 
 export class Minimap {
