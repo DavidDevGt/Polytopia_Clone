@@ -1,4 +1,5 @@
-import { STARTING_STARS, UNIT_STATS } from './constants';
+import { STARTING_STARS, UNIT_STATS, VISION_RADIUS } from './constants';
+import { tilesWithin } from './grid';
 import { DEFAULT_MAP_CONFIG, generateMap } from './map/generateMap';
 import { createRng } from './rng';
 import type { City, GameState, Player, Unit } from './types';
@@ -24,19 +25,34 @@ export function createGame(config: GameConfig): GameState {
   let nextEntityId = 1;
 
   map.capitalTileIndexes.forEach((tileIndex, playerId) => {
-    players.push({ id: playerId, stars: STARTING_STARS });
-    cities.push({ id: nextEntityId++, tileIndex, ownerId: playerId, level: 1, isCapital: true });
+    players.push({
+      id: playerId,
+      stars: STARTING_STARS,
+      eliminated: false,
+      explored: new Array<boolean>(map.tiles.length).fill(false),
+    });
+    cities.push({
+      id: nextEntityId++,
+      tileIndex,
+      ownerId: playerId,
+      level: 1,
+      population: 0,
+      isCapital: true,
+    });
     units.push({
       id: nextEntityId++,
       kind: 'warrior',
       ownerId: playerId,
       tileIndex,
       hp: UNIT_STATS.warrior.hp,
+      kills: 0,
+      veteran: false,
       hasMoved: false,
+      hasAttacked: false,
     });
   });
 
-  return {
+  const state: GameState = {
     seed: config.seed,
     mapSize: config.mapSize,
     turn: 1,
@@ -45,6 +61,19 @@ export function createGame(config: GameConfig): GameState {
     players,
     cities,
     units,
+    winnerId: null,
     nextEntityId,
+  };
+
+  // Everyone starts knowing the lands around their capital (one ring beyond
+  // normal vision, so the first turn offers real choices, not blind steps).
+  return {
+    ...state,
+    players: state.players.map((player, playerId) => {
+      const home = new Set(
+        tilesWithin(map.capitalTileIndexes[playerId]!, VISION_RADIUS + 1, config.mapSize),
+      );
+      return { ...player, explored: player.explored.map((_, index) => home.has(index)) };
+    }),
   };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PASSABLE_TERRAIN } from '../constants';
-import { chebyshevDistance } from '../grid';
+import { chebyshevDistance, neighbors } from '../grid';
 import { createRng } from '../rng';
 import { DEFAULT_MAP_CONFIG, generateMap, type MapGenConfig } from './generateMap';
 
@@ -29,6 +29,27 @@ describe('generateMap', () => {
     }
   });
 
+  it('keeps all capitals mutually reachable over land', () => {
+    for (const seed of [1, 7, 42, 99, 1234]) {
+      const map = generateMap(createRng(seed), CONFIG);
+      const [start, ...rest] = map.capitalTileIndexes;
+      const reached = new Set([start!]);
+      const queue = [start!];
+      while (queue.length > 0) {
+        const current = queue.pop()!;
+        for (const next of neighbors(current, CONFIG.size)) {
+          if (!reached.has(next) && PASSABLE_TERRAIN.has(map.tiles[next]!.terrain)) {
+            reached.add(next);
+            queue.push(next);
+          }
+        }
+      }
+      for (const capital of rest) {
+        expect(reached.has(capital)).toBe(true);
+      }
+    }
+  });
+
   it('places villages only on passable terrain, spaced apart', () => {
     const map = generateMap(createRng(3), CONFIG);
     const villages = map.tiles
@@ -49,10 +70,47 @@ describe('generateMap', () => {
     }
   });
 
-  it('respects the approximate water budget', () => {
-    const map = generateMap(createRng(11), CONFIG);
-    const wet = map.tiles.filter((t) => t.terrain === 'water' || t.terrain === 'ocean').length;
-    expect(wet).toBeGreaterThan(0);
-    expect(wet).toBeLessThanOrEqual(Math.floor(16 * 16 * CONFIG.waterRatio));
+  it('respects the approximate water budget on any seed', () => {
+    for (const seed of [11, 77, 2024]) {
+      const map = generateMap(createRng(seed), CONFIG);
+      const wet = map.tiles.filter((t) => t.terrain === 'water' || t.terrain === 'ocean').length;
+      const ratio = wet / map.tiles.length;
+      expect(ratio).toBeGreaterThan(CONFIG.waterRatio * 0.5);
+      expect(ratio).toBeLessThan(CONFIG.waterRatio * 1.2);
+    }
+  });
+
+  it('forms contiguous landmasses rather than salt-and-pepper noise', () => {
+    // The largest connected landmass should hold most of the passable tiles —
+    // scattered random tiles would fragment into many small regions.
+    const map = generateMap(createRng(5), CONFIG);
+    const passable = new Set<number>();
+    map.tiles.forEach((tile, index) => {
+      if (PASSABLE_TERRAIN.has(tile.terrain)) {
+        passable.add(index);
+      }
+    });
+    const visited = new Set<number>();
+    let largest = 0;
+    for (const start of passable) {
+      if (visited.has(start)) {
+        continue;
+      }
+      let regionSize = 0;
+      const queue = [start];
+      visited.add(start);
+      while (queue.length > 0) {
+        const current = queue.pop()!;
+        regionSize++;
+        for (const next of neighbors(current, CONFIG.size)) {
+          if (passable.has(next) && !visited.has(next)) {
+            visited.add(next);
+            queue.push(next);
+          }
+        }
+      }
+      largest = Math.max(largest, regionSize);
+    }
+    expect(largest / passable.size).toBeGreaterThan(0.6);
   });
 });

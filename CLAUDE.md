@@ -6,6 +6,7 @@ Turn-based 4X strategy game inspired by The Battle of Polytopia. TypeScript + Ca
 
 - `npm run dev` — dev server
 - `npm test` — run tests (Vitest)
+- `npm run bench` — micro-benchmarks for hot paths (map gen, BFS, AI)
 - `npm run typecheck` — TypeScript, strict mode
 - `npm run lint` / `npm run format` — ESLint (type-checked) / Prettier
 - `npm run build` — typecheck + production build

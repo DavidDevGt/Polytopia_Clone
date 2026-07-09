@@ -7,30 +7,47 @@
       rel="icon"
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⭐</text></svg>"
     />
-    <title>Polytopia Clone</title>
+    <title>Terranova — 4X por turnos</title>
   </head>
   <body>
     <div id="app">
-      <header class="hud">
-        <div class="hud__group">
-          <span id="player-badge" class="badge"></span>
-          <span id="turn-label"></span>
-          <span id="stars-label"></span>
+      <header class="topbar">
+        <div class="brand">⬡ TERRANOVA</div>
+        <div class="topbar__center">
+          <span id="player-badge" class="chip"></span>
+          <span id="turn-label" class="stat"></span>
+          <span id="stars-label" class="stat stat--stars"></span>
         </div>
-        <div class="hud__group" id="train-buttons"></div>
-        <div class="hud__group">
-          <label class="seed">
+        <div class="topbar__right">
+          <label class="field">
             Semilla
             <input id="seed-input" type="number" value="42" />
           </label>
+          <label class="field">
+            Modo
+            <select id="mode-select">
+              <option value="ai">vs IA</option>
+              <option value="hotseat">2 jugadores</option>
+            </select>
+          </label>
           <button id="new-game" type="button">Nueva partida</button>
-          <button id="end-turn" type="button" class="primary">Terminar turno</button>
+          <button id="mute-btn" type="button" class="icon-btn" title="Silenciar (M)">🔊</button>
+          <button id="help-btn" type="button" class="icon-btn" title="Ayuda (?)">?</button>
         </div>
       </header>
-      <main class="board">
-        <canvas id="board-canvas"></canvas>
-      </main>
-      <footer id="status" class="status"></footer>
+      <div class="content">
+        <main class="board">
+          <canvas id="board-canvas"></canvas>
+          <div id="event-log" class="event-log" aria-live="polite"></div>
+          <canvas id="minimap" width="150" height="150"></canvas>
+          <div id="turn-banner" class="turn-banner hidden"></div>
+          <div id="forecast" class="forecast hidden"></div>
+          <div id="toast" class="toast hidden"></div>
+          <button id="end-turn" type="button" class="end-turn">Terminar turno <kbd>␣</kbd></button>
+        </main>
+        <aside id="inspector" class="inspector"></aside>
+      </div>
+      <div id="overlay" class="overlay hidden"></div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
