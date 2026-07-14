@@ -94,6 +94,15 @@ export class Renderer {
     };
   }
 
+  private isOnScreen(px: number, py: number, margin = 250): boolean {
+    return (
+      px >= -margin &&
+      px <= this.canvas.clientWidth + margin &&
+      py >= -margin &&
+      py <= this.canvas.clientHeight + margin
+    );
+  }
+
   screenToTile(state: GameState, px: number, py: number): number | null {
     const wx = (px - this.canvas.clientWidth / 2) / this.zoom + this.camX;
     const wy = (py - this.canvas.clientHeight / 2) / this.zoom + this.camY;
@@ -393,6 +402,8 @@ export class Renderer {
     const { ctx } = this;
     const world = this.worldOfTile(state, index);
     const screen = this.toScreen(world);
+    if (!this.isOnScreen(screen.x, screen.y)) return;
+
     const hw = (TILE_W / 2) * this.zoom;
     const hh = (TILE_H / 2) * this.zoom;
 
@@ -749,6 +760,8 @@ export class Renderer {
       const tile = state.tiles[i]!;
       const { x, y } = toCoords(i, state.mapSize);
       const p = this.toScreen(this.worldOfTile(state, i));
+      if (!this.isOnScreen(p.x, p.y)) continue;
+
       if (tile.terrain === 'forest') {
         entities.push({ row: x + y, draw: () => drawForest(ctx, p.x, p.y, this.zoom, i, now) });
       } else if (tile.terrain === 'mountain') {
@@ -771,6 +784,8 @@ export class Renderer {
       }
       const { x, y } = toCoords(city.tileIndex, state.mapSize);
       const p = this.toScreen(this.worldOfTile(state, city.tileIndex));
+      if (!this.isOnScreen(p.x, p.y)) continue;
+
       entities.push({
         row: x + y,
         draw: () =>
@@ -794,6 +809,12 @@ export class Renderer {
         continue;
       }
       const { x, y } = toCoords(unit.tileIndex, state.mapSize);
+      const resting = this.worldOfTile(state, unit.tileIndex);
+      const sample = this.tweens.sample(unit.id, resting, now);
+      const world = sample?.pos ?? resting;
+      const p = this.toScreen(world);
+      if (!this.isOnScreen(p.x, p.y)) continue;
+
       entities.push({ row: x + y, draw: () => this.drawUnit(state, unit.id, opts, now) });
     }
 

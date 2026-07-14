@@ -3,17 +3,15 @@
  * DOM/pointer events into Actions, runs the AI turns, and feeds the renderer.
  */
 import './style.css';
+
 import {
-  applyActionWithEvents,
-  GameRuleError,
   type Action,
   type GameEvent,
   type GameRuleErrorCode,
 } from './core/actions';
-import { nextAiAction } from './core/ai';
 import { forecastBattle, inAttackRange, maxHpOf } from './core/combat';
-import { DEFAULT_MAP_SIZE, DEFAULT_PLAYER_COUNT, HARVEST_INFO, UNIT_STATS } from './core/constants';
-import { createGame } from './core/game';
+import { HARVEST_INFO, UNIT_STATS } from './core/constants';
+import { GameStore } from './core/store';
 import {
   cityAt,
   grossIncomeFor,
@@ -22,7 +20,6 @@ import {
   territoryOf,
   unitAt,
   upkeepFor,
-  visibleTiles,
 } from './core/queries';
 import type { City, GameState, Resource, Terrain, Unit, UnitKind } from './core/types';
 import { Minimap } from './render/minimap';
@@ -118,7 +115,7 @@ const endTurnButton = element<HTMLButtonElement>('end-turn');
 
 // ---------- session state ----------
 
-type Mode = 'ai' | 'hotseat';
+export const store = new GameStore(Number(seedInput.value) || 0, 'ai');
 
 const renderer = new Renderer(canvas);
 const minimap = new Minimap(minimapCanvas);
@@ -129,84 +126,53 @@ if (window.innerWidth < 760 || window.innerHeight < 480) {
   renderer.zoomBy(0.7);
 }
 
-let mode: Mode = 'ai';
-let state: GameState = createGame({
-  seed: Number(seedInput.value) || 0,
-  mapSize: DEFAULT_MAP_SIZE,
-  playerCount: DEFAULT_PLAYER_COUNT,
-});
-let selectedUnitId: number | null = null;
-let selectedCityId: number | null = null;
-let hoverTile: number | null = null;
-let aiBusy = false;
 let toastTimer = 0;
 let mouseX = 0;
 let mouseY = 0;
-const kills = new Map<number, number>();
-const killsByKind = new Map<string, number>();
-const citiesFounded = new Map<number, number>();
-const citiesConquered = new Map<number, number>();
-const milestones: { turn: number; text: string }[] = [];
 
-function recordMilestone(text: string): void {
-  milestones.push({ turn: state.turn, text });
-  if (milestones.length > 40) {
-    milestones.shift();
-  }
-}
+store.onUpdate = updatePanels;
+store.onEvent = (before, events) => {
+  renderer.playEvents(before, events, performance.now());
+  handleEvents(before, events);
+};
+store.onError = (code) => {
+  showToast(ERROR_MESSAGES[code]);
+  sound.play('error');
+};
 
 function playerName(id: number): string {
-  return mode === 'ai' && id === 1 ? 'IA' : `Jugador ${id + 1}`;
-}
-
-function viewerId(): number {
-  return mode === 'ai' ? 0 : state.currentPlayerId;
-}
-
-function humanTurn(): boolean {
-  return !aiBusy && state.winnerId === null && (mode === 'hotseat' || state.currentPlayerId === 0);
-}
-
-// Visibility is recomputed only when the state reference changes.
-let visibleCacheState: GameState | null = null;
-let visibleCache: Set<number> = new Set();
-function viewerVisible(): Set<number> {
-  if (visibleCacheState !== state) {
-    visibleCache = visibleTiles(state, viewerId());
-    visibleCacheState = state;
-  }
-  return visibleCache;
+  return store.mode === 'ai' && id === 1 ? 'IA' : `Jugador ${id + 1}`;
 }
 
 function selectedUnit(): Unit | undefined {
-  return selectedUnitId === null ? undefined : state.units.find((u) => u.id === selectedUnitId);
+  return store.selectedUnitId === null ? undefined : store.state.units.find((u) => u.id === store.selectedUnitId);
 }
 
 function selectedCity(): City | undefined {
-  return selectedCityId === null ? undefined : state.cities.find((c) => c.id === selectedCityId);
+  return store.selectedCityId === null ? undefined : store.state.cities.find((c) => c.id === store.selectedCityId);
 }
 
 function currentReachable(): ReadonlySet<number> {
   const unit = selectedUnit();
-  if (!unit || unit.hasMoved || unit.ownerId !== state.currentPlayerId || !humanTurn()) {
+  if (!unit || unit.hasMoved || unit.ownerId !== store.state.currentPlayerId || !store.humanTurn()) {
     return new Set();
   }
-  return reachableTiles(state, unit);
+  return reachableTiles(store.state, unit);
 }
 
 /** Enemy tiles the selected unit can strike right now → defender unit id. */
 function currentAttackable(): Map<number, number> {
   const result = new Map<number, number>();
   const unit = selectedUnit();
-  if (!unit || unit.hasAttacked || unit.ownerId !== state.currentPlayerId || !humanTurn()) {
+  if (!unit || unit.hasAttacked || unit.ownerId !== store.state.currentPlayerId || !store.humanTurn()) {
     return result;
   }
-  const visible = viewerVisible();
-  for (const enemy of state.units) {
+  const visible = store.viewerVisible();
+  for (const enemy of store.state.units) {
     if (
       enemy.ownerId !== unit.ownerId &&
       visible.has(enemy.tileIndex) &&
-      inAttackRange(state, unit, enemy)
+      inAttackRange(store.state, unit, enemy)
     ) {
       result.set(enemy.tileIndex, enemy.id);
     }
@@ -215,25 +181,6 @@ function currentAttackable(): Map<number, number> {
 }
 
 // ---------- dispatch & events ----------
-
-function dispatch(action: Action): boolean {
-  const before = state;
-  try {
-    const result = applyActionWithEvents(state, action);
-    renderer.playEvents(before, result.events, performance.now());
-    state = result.state;
-    handleEvents(before, result.events);
-    updatePanels();
-    return true;
-  } catch (error) {
-    if (error instanceof GameRuleError) {
-      showToast(ERROR_MESSAGES[error.code]);
-      sound.play('error');
-      return false;
-    }
-    throw error;
-  }
-}
 
 function handleEvents(before: GameState, events: readonly GameEvent[]): void {
   for (const event of events) {
@@ -247,23 +194,17 @@ function handleEvents(before: GameState, events: readonly GameEvent[]): void {
         const defender = before.units.find((u) => u.id === event.defenderId);
         if (attacker && defender) {
           if (event.defenderDied) {
-            kills.set(attacker.ownerId, (kills.get(attacker.ownerId) ?? 0) + 1);
-            const kindKey = `${attacker.ownerId}:${attacker.kind}`;
-            killsByKind.set(kindKey, (killsByKind.get(kindKey) ?? 0) + 1);
             log(`⚔ ${UNIT_NAMES[attacker.kind]} elimina a ${UNIT_NAMES[defender.kind]}`);
           } else {
             log(`⚔ ${UNIT_NAMES[attacker.kind]} inflige ${event.damageToDefender} de daño`);
           }
           if (event.attackerDied) {
-            kills.set(defender.ownerId, (kills.get(defender.ownerId) ?? 0) + 1);
-            const kindKey = `${defender.ownerId}:${defender.kind}`;
-            killsByKind.set(kindKey, (killsByKind.get(kindKey) ?? 0) + 1);
             log(`💥 ${UNIT_NAMES[attacker.kind]} cae en el contraataque`);
           }
         }
         if (event.promotedUnitId !== null) {
           log('★ Unidad promovida a veterana');
-          recordMilestone('Una unidad asciende a veterana');
+          store.recordMilestone('Una unidad asciende a veterana');
           sound.play('levelup');
         }
         break;
@@ -271,15 +212,13 @@ function handleEvents(before: GameState, events: readonly GameEvent[]): void {
       case 'cityCaptured':
         sound.play('capture');
         if (event.founded) {
-          citiesFounded.set(event.byPlayer, (citiesFounded.get(event.byPlayer) ?? 0) + 1);
           log(`🏘 ${playerName(event.byPlayer)} funda una ciudad`);
-          recordMilestone(`${playerName(event.byPlayer)} funda una ciudad`);
+          store.recordMilestone(`${playerName(event.byPlayer)} funda una ciudad`);
         } else {
-          citiesConquered.set(event.byPlayer, (citiesConquered.get(event.byPlayer) ?? 0) + 1);
           log(
             `🏰 ${playerName(event.byPlayer)} captura ${event.capital ? 'la CAPITAL enemiga' : 'una ciudad'}`,
           );
-          recordMilestone(
+          store.recordMilestone(
             `${playerName(event.byPlayer)} captura ${event.capital ? 'la capital enemiga' : 'una ciudad'}`,
           );
         }
@@ -297,13 +236,13 @@ function handleEvents(before: GameState, events: readonly GameEvent[]): void {
         break;
       case 'turnStarted':
         sound.play('turn');
-        showTurnBanner(`Turno ${state.turn} — ${playerName(event.playerId)}`);
+        showTurnBanner(`Turno ${store.state.turn} — ${playerName(event.playerId)}`);
         log(`🕐 ${playerName(event.playerId)} (${event.income >= 0 ? '+' : ''}${event.income}★)`);
-        clearSelection();
+        store.clearSelection();
         break;
       case 'playerEliminated':
         log(`☠ ${playerName(event.playerId)} ha sido eliminado`);
-        recordMilestone(`${playerName(event.playerId)} cae eliminado`);
+        store.recordMilestone(`${playerName(event.playerId)} cae eliminado`);
         break;
       case 'gameWon':
         sound.play('victory');
@@ -317,23 +256,25 @@ function handleEvents(before: GameState, events: readonly GameEvent[]): void {
 // ---------- AI ----------
 
 function maybeRunAi(): void {
-  if (mode !== 'ai' || aiBusy || state.winnerId !== null || state.currentPlayerId !== 1) {
+  // store handles the ai busy loop, but because the browser timeout is async, 
+  // we do the timeout loop here so we don't break main.ts expectations.
+  if (store.mode !== 'ai' || store.aiBusy || store.state.winnerId !== null || store.state.currentPlayerId !== 1) {
     return;
   }
-  aiBusy = true;
+  store.aiBusy = true;
   updatePanels();
   let guard = 0;
   const step = (): void => {
-    if (state.winnerId !== null || state.currentPlayerId !== 1 || guard++ > 300) {
-      aiBusy = false;
+    if (store.state.winnerId !== null || store.state.currentPlayerId !== 1 || guard++ > 300) {
+      store.aiBusy = false;
       updatePanels();
       return;
     }
-    const action = nextAiAction(state);
-    aiBusy = false; // allow dispatch → handleEvents → maybeRunAi to no-op re-entry
-    const ok = dispatch(action);
-    aiBusy = action.type !== 'endTurn' && ok && state.currentPlayerId === 1;
-    if (aiBusy) {
+    const action = store.nextAiAction();
+    store.aiBusy = true; // prevent dispatch -> handleEvents -> maybeRunAi from spawning parallel loops
+    const ok = store.dispatch(action);
+    store.aiBusy = action.type !== 'endTurn' && ok && store.state.currentPlayerId === 1;
+    if (store.aiBusy) {
       window.setTimeout(step, 230);
     } else {
       updatePanels();
@@ -370,15 +311,15 @@ function showTurnBanner(text: string): void {
 }
 
 function updatePanels(): void {
-  const player = playerById(state, state.currentPlayerId);
+  const player = playerById(store.state, store.state.currentPlayerId);
   playerBadge.textContent = playerName(player.id);
   playerBadge.style.background = playerColor(player.id);
-  turnLabel.textContent = `Turno ${state.turn}`;
-  const gross = grossIncomeFor(state, player.id);
-  const upkeep = upkeepFor(state, player.id);
+  turnLabel.textContent = `Turno ${store.state.turn}`;
+  const gross = grossIncomeFor(store.state, player.id);
+  const upkeep = upkeepFor(store.state, player.id);
   starsLabel.textContent = `★ ${player.stars}  (+${gross}${upkeep > 0 ? ` −${upkeep}` : ''})`;
   starsLabel.title = `Ingresos ${gross} · Mantenimiento ${upkeep}`;
-  endTurnButton.disabled = !humanTurn();
+  endTurnButton.disabled = !store.humanTurn();
   renderInspector();
   // Mobile: the inspector is a bottom sheet that only appears when there is
   // something actionable selected; the board keeps the whole screen otherwise.
@@ -406,10 +347,10 @@ function renderInspector(): void {
 function renderUnitPanel(unit: Unit): void {
   const stats = UNIT_STATS[unit.kind];
   const cap = maxHpOf(unit);
-  const tile = state.tiles[unit.tileIndex]!;
-  const cityHere = cityAt(state, unit.tileIndex);
+  const tile = store.state.tiles[unit.tileIndex]!;
+  const cityHere = cityAt(store.state, unit.tileIndex);
   const canCapture =
-    unit.ownerId === state.currentPlayerId &&
+    unit.ownerId === store.state.currentPlayerId &&
     !unit.hasMoved &&
     !unit.hasAttacked &&
     (tile.hasVillage || (cityHere && cityHere.ownerId !== unit.ownerId));
@@ -436,18 +377,18 @@ function renderUnitPanel(unit: Unit): void {
     </div>`;
 
   inspector.querySelector('[data-action="capture"]')?.addEventListener('click', () => {
-    if (dispatch({ type: 'capture', unitId: unit.id })) {
-      clearSelection();
+    if (store.dispatch({ type: 'capture', unitId: unit.id })) {
+      store.clearSelection();
     }
   });
 }
 
 function renderCityPanel(city: City): void {
-  const player = playerById(state, state.currentPlayerId);
+  const player = playerById(store.state, store.state.currentPlayerId);
   const threshold = city.level + 1;
   const income = 1 + city.level + (city.isCapital ? 1 : 0);
-  const own = city.ownerId === state.currentPlayerId && humanTurn();
-  const occupied = unitAt(state, city.tileIndex) !== undefined;
+  const own = city.ownerId === store.state.currentPlayerId && store.humanTurn();
+  const occupied = unitAt(store.state, city.tileIndex) !== undefined;
 
   const trainButtons = (Object.keys(UNIT_STATS) as UnitKind[])
     .map((kind) => {
@@ -459,10 +400,10 @@ function renderCityPanel(city: City): void {
     })
     .join('');
 
-  const harvestables = territoryOf(state, city)
-    .filter((t) => state.tiles[t]?.resource)
+  const harvestables = territoryOf(store.state, city)
+    .filter((t) => store.state.tiles[t]?.resource)
     .map((t) => {
-      const resource = state.tiles[t]!.resource!;
+      const resource = store.state.tiles[t]!.resource!;
       const info = HARVEST_INFO[resource];
       const disabled = !own || player.stars < info.cost;
       return `<button data-harvest="${t}" ${disabled ? 'disabled' : ''}>
@@ -491,7 +432,7 @@ function renderCityPanel(city: City): void {
 
   for (const button of inspector.querySelectorAll<HTMLButtonElement>('[data-train]')) {
     button.addEventListener('click', () => {
-      dispatch({
+      store.dispatch({
         type: 'trainUnit',
         cityId: city.id,
         unitKind: button.dataset['train'] as UnitKind,
@@ -500,18 +441,18 @@ function renderCityPanel(city: City): void {
   }
   for (const button of inspector.querySelectorAll<HTMLButtonElement>('[data-harvest]')) {
     button.addEventListener('click', () => {
-      dispatch({ type: 'harvest', cityId: city.id, tileIndex: Number(button.dataset['harvest']) });
+      store.dispatch({ type: 'harvest', cityId: city.id, tileIndex: Number(button.dataset['harvest']) });
     });
   }
 }
 
 function renderHoverPanel(): void {
-  const explored = playerById(state, viewerId()).explored;
+  const explored = playerById(store.state, store.viewerId()).explored;
   let tileInfo = '<div class="hint">Pasa el cursor por el mapa para inspeccionar casillas.</div>';
-  if (hoverTile !== null && explored[hoverTile]) {
-    const tile = state.tiles[hoverTile]!;
-    const cityHere = cityAt(state, hoverTile);
-    const unitHere = viewerVisible().has(hoverTile) ? unitAt(state, hoverTile) : undefined;
+  if (store.hoverTile !== null && explored[store.hoverTile]) {
+    const tile = store.state.tiles[store.hoverTile]!;
+    const cityHere = cityAt(store.state, store.hoverTile);
+    const unitHere = store.viewerVisible().has(store.hoverTile) ? unitAt(store.state, store.hoverTile) : undefined;
     tileInfo = `
       <div class="statgrid">
         ${statRow('Terreno', TERRAIN_NAMES[tile.terrain])}
@@ -549,12 +490,12 @@ function renderHoverPanel(): void {
 function updateForecast(): void {
   const unit = selectedUnit();
   const attackable = currentAttackable();
-  if (!unit || hoverTile === null || !attackable.has(hoverTile)) {
+  if (!unit || store.hoverTile === null || !attackable.has(store.hoverTile)) {
     forecastBox.classList.add('hidden');
     return;
   }
-  const defender = state.units.find((u) => u.id === attackable.get(hoverTile!))!;
-  const forecast = forecastBattle(state, unit, defender);
+  const defender = store.state.units.find((u) => u.id === attackable.get(store.hoverTile!))!;
+  const forecast = forecastBattle(store.state, unit, defender);
   forecastBox.innerHTML = `
     ⚔ Daño: <b style="color:var(--gold)">−${forecast.damageToDefender}</b>
     ${forecast.defenderDies ? ' <b style="color:var(--danger)">(muere)</b>' : ''}<br/>
@@ -578,22 +519,22 @@ function showVictory(winnerId: number): void {
       <span class="track"><i style="width:${max > 0 ? Math.round((value / max) * 100) : 0}%; background:${color}"></i></span>
       <b>${value}</b>
     </div>`;
-  const maxKills = Math.max(1, ...state.players.map((p) => statOf(kills, p.id)));
+  const maxKills = Math.max(1, ...store.state.players.map((p) => statOf(store.kills, p.id)));
   const maxCities = Math.max(
     1,
-    ...state.players.map((p) => state.cities.filter((c) => c.ownerId === p.id).length),
+    ...store.state.players.map((p) => store.state.cities.filter((c) => c.ownerId === p.id).length),
   );
 
-  const rows = state.players
+  const rows = store.state.players
     .map((p) => {
       const color = playerColor(p.id);
-      const cityCount = state.cities.filter((c) => c.ownerId === p.id).length;
+      const cityCount = store.state.cities.filter((c) => c.ownerId === p.id).length;
       return `
       <div class="panel">
         <h3><span class="chip" style="background:${color}">${playerName(p.id)}</span></h3>
-        ${bar('Bajas', statOf(kills, p.id), maxKills, color)}
+        ${bar('Bajas', statOf(store.kills, p.id), maxKills, color)}
         ${bar('Ciudades', cityCount, maxCities, color)}
-        ${bar('Fundadas', statOf(citiesFounded, p.id), maxCities, color)}
+        ${bar('Fundadas', statOf(store.citiesFounded, p.id), maxCities, color)}
       </div>`;
     })
     .join('');
@@ -601,7 +542,7 @@ function showVictory(winnerId: number): void {
   // Medals: MVP unit kind, best founder, best conqueror.
   let mvp = '';
   let mvpKills = 0;
-  for (const [key, count] of killsByKind) {
+  for (const [key, count] of store.killsByKind) {
     if (count > mvpKills) {
       mvpKills = count;
       const [ownerId, kind] = key.split(':');
@@ -619,8 +560,8 @@ function showVictory(winnerId: number): void {
     }
     return best === null ? null : `${playerName(best)} (${bestValue})`;
   };
-  const founder = bestOf(citiesFounded);
-  const conqueror = bestOf(citiesConquered);
+  const founder = bestOf(store.citiesFounded);
+  const conqueror = bestOf(store.citiesConquered);
   const medals = [
     mvp ? `<span class="medal">⚔ <span>MVP</span> <span class="who">${mvp}</span></span>` : '',
     founder
@@ -631,7 +572,7 @@ function showVictory(winnerId: number): void {
       : '',
   ].join('');
 
-  const timeline = milestones
+  const timeline = store.milestones
     .slice(-10)
     .map(
       (m, i) =>
@@ -651,7 +592,7 @@ function showVictory(winnerId: number): void {
     <div class="confetti">${confetti}</div>
     <div class="card">
       <h2 class="victory-title">🏆 ¡${playerName(winnerId)} conquista Terranova!</h2>
-      <p class="victory-sub">Victoria por dominación en el turno ${state.turn}.</p>
+      <p class="victory-sub">Victoria por dominación en el turno ${store.state.turn}.</p>
       <canvas id="victory-map" class="victory-map" width="188" height="188"></canvas>
       <div class="scoreboard">${rows}</div>
       <div class="medals">${medals}</div>
@@ -664,10 +605,10 @@ function showVictory(winnerId: number): void {
   // Final map, fully revealed — the war, at a glance.
   const victoryCanvas = overlay.querySelector<HTMLCanvasElement>('#victory-map');
   if (victoryCanvas) {
-    const revealed = new Array<boolean>(state.tiles.length).fill(true);
+    const revealed = new Array<boolean>(store.state.tiles.length).fill(true);
     const allVisible = new Set<number>(revealed.map((_, i) => i));
     new Minimap(victoryCanvas).draw(
-      state,
+      store.state,
       revealed,
       allVisible,
       { x: 0, y: 1e9, zoom: 1 },
@@ -706,38 +647,33 @@ function showHelp(): void {
 
 // ---------- selection & input ----------
 
-function clearSelection(): void {
-  selectedUnitId = null;
-  selectedCityId = null;
-}
-
 function selectNextUnit(): void {
-  if (!humanTurn()) {
+  if (!store.humanTurn()) {
     return;
   }
-  const mine = state.units.filter(
-    (u) => u.ownerId === state.currentPlayerId && (!u.hasMoved || !u.hasAttacked),
+  const mine = store.state.units.filter(
+    (u) => u.ownerId === store.state.currentPlayerId && (!u.hasMoved || !u.hasAttacked),
   );
   if (mine.length === 0) {
     showToast('No quedan unidades con acciones');
     return;
   }
-  const startIndex = mine.findIndex((u) => u.id === selectedUnitId);
+  const startIndex = mine.findIndex((u) => u.id === store.selectedUnitId);
   const next = mine[(startIndex + 1) % mine.length]!;
-  clearSelection();
-  selectedUnitId = next.id;
-  renderer.centerOn(state, next.tileIndex);
+  store.clearSelection();
+  store.selectedUnitId = next.id;
+  renderer.centerOn(store.state, next.tileIndex);
   sound.play('select');
   updatePanels();
 }
 
 function onBoardClick(px: number, py: number): void {
-  if (!humanTurn()) {
+  if (!store.humanTurn()) {
     return;
   }
-  const tileIndex = renderer.screenToTile(state, px, py);
+  const tileIndex = renderer.screenToTile(store.state, px, py);
   if (tileIndex === null) {
-    clearSelection();
+    store.clearSelection();
     updatePanels();
     return;
   }
@@ -745,46 +681,34 @@ function onBoardClick(px: number, py: number): void {
   const attackable = currentAttackable();
   const unit = selectedUnit();
   if (unit && attackable.has(tileIndex)) {
-    dispatch({ type: 'attack', attackerId: unit.id, defenderId: attackable.get(tileIndex)! });
+    store.dispatch({ type: 'attack', attackerId: unit.id, defenderId: attackable.get(tileIndex)! });
     return;
   }
   if (unit && currentReachable().has(tileIndex)) {
-    dispatch({ type: 'moveUnit', unitId: unit.id, to: tileIndex });
+    store.dispatch({ type: 'moveUnit', unitId: unit.id, to: tileIndex });
     return; // keep it selected: it may still attack
   }
 
-  const clickedUnit = unitAt(state, tileIndex);
-  const clickedCity = cityAt(state, tileIndex);
-  clearSelection();
-  if (clickedUnit && clickedUnit.ownerId === state.currentPlayerId) {
-    selectedUnitId = clickedUnit.id;
+  const clickedUnit = unitAt(store.state, tileIndex);
+  const clickedCity = cityAt(store.state, tileIndex);
+  store.clearSelection();
+  if (clickedUnit && clickedUnit.ownerId === store.state.currentPlayerId) {
+    store.selectedUnitId = clickedUnit.id;
     sound.play('select');
-  } else if (clickedCity && clickedCity.ownerId === state.currentPlayerId) {
-    selectedCityId = clickedCity.id;
+  } else if (clickedCity && clickedCity.ownerId === store.state.currentPlayerId) {
+    store.selectedCityId = clickedCity.id;
     sound.play('select');
   }
   updatePanels();
 }
 
 function newGame(): void {
-  mode = modeSelect.value === 'hotseat' ? 'hotseat' : 'ai';
-  state = createGame({
-    seed: Number(seedInput.value) || 0,
-    mapSize: DEFAULT_MAP_SIZE,
-    playerCount: DEFAULT_PLAYER_COUNT,
-  });
-  clearSelection();
-  kills.clear();
-  killsByKind.clear();
-  citiesFounded.clear();
-  citiesConquered.clear();
-  milestones.length = 0;
-  aiBusy = false;
+  store.newGame(Number(seedInput.value) || 0, modeSelect.value === 'hotseat' ? 'hotseat' : 'ai');
   eventLog.innerHTML = '';
   overlay.classList.add('hidden');
-  const capital = state.cities.find((c) => c.ownerId === 0 && c.isCapital);
+  const capital = store.state.cities.find((c) => c.ownerId === 0 && c.isCapital);
   if (capital) {
-    renderer.centerOn(state, capital.tileIndex);
+    renderer.centerOn(store.state, capital.tileIndex);
   }
   showTurnBanner('Turno 1 — ' + playerName(0));
   updatePanels();
@@ -863,7 +787,7 @@ canvas.addEventListener('pointermove', (e) => {
     return;
   }
   // No buttons down: mouse hover (touch never reaches here).
-  hoverTile = renderer.screenToTile(state, mouseX, mouseY);
+  store.hoverTile = renderer.screenToTile(store.state, mouseX, mouseY);
   if (!selectedUnit() && !selectedCity()) {
     renderInspector();
   }
@@ -899,9 +823,9 @@ canvas.addEventListener('wheel', (e) => {
 
 minimapCanvas.addEventListener('click', (e) => {
   const rect = minimapCanvas.getBoundingClientRect();
-  const tile = minimap.tileAt(state, e.clientX - rect.left, e.clientY - rect.top);
+  const tile = minimap.tileAt(store.state, e.clientX - rect.left, e.clientY - rect.top);
   if (tile !== null) {
-    renderer.centerOn(state, tile);
+    renderer.centerOn(store.state, tile);
   }
 });
 
@@ -912,13 +836,13 @@ window.addEventListener('keydown', (e) => {
   switch (e.key) {
     case ' ':
       e.preventDefault();
-      if (humanTurn()) {
-        clearSelection();
-        dispatch({ type: 'endTurn' });
+      if (store.humanTurn()) {
+        store.clearSelection();
+        store.dispatch({ type: 'endTurn' });
       }
       break;
     case 'Escape':
-      clearSelection();
+      store.clearSelection();
       overlay.classList.add('hidden');
       updatePanels();
       break;
@@ -929,8 +853,8 @@ window.addEventListener('keydown', (e) => {
     case 'c':
     case 'C': {
       const unit = selectedUnit();
-      if (unit && humanTurn()) {
-        dispatch({ type: 'capture', unitId: unit.id });
+      if (unit && store.humanTurn()) {
+        store.dispatch({ type: 'capture', unitId: unit.id });
       }
       break;
     }
@@ -945,9 +869,9 @@ window.addEventListener('keydown', (e) => {
 });
 
 endTurnButton.addEventListener('click', () => {
-  if (humanTurn()) {
-    clearSelection();
-    dispatch({ type: 'endTurn' });
+  if (store.humanTurn()) {
+    store.clearSelection();
+    store.dispatch({ type: 'endTurn' });
   }
 });
 element<HTMLButtonElement>('new-game').addEventListener('click', () => {
@@ -970,23 +894,23 @@ new ResizeObserver(() => {
 // ---------- render loop ----------
 
 function frame(now: number): void {
-  const explored = playerById(state, viewerId()).explored;
-  const visible = viewerVisible();
+  const explored = playerById(store.state, store.viewerId()).explored;
+  const visible = store.viewerVisible();
   renderer.draw(
-    state,
+    store.state,
     {
-      viewerId: viewerId(),
+      viewerId: store.viewerId(),
       explored,
       visible,
-      selectedUnitId,
-      selectedCityId,
+      selectedUnitId: store.selectedUnitId,
+      selectedCityId: store.selectedCityId,
       reachable: currentReachable(),
       attackableTiles: new Set(currentAttackable().keys()),
-      hoverTile,
+      hoverTile: store.hoverTile,
     },
     now,
   );
-  minimap.draw(state, explored, visible, renderer.cameraInfo, {
+  minimap.draw(store.state, explored, visible, renderer.cameraInfo, {
     width: canvas.clientWidth,
     height: canvas.clientHeight,
   });
@@ -1015,20 +939,20 @@ declare global {
 
 window.__terranova = {
   get state() {
-    return state;
+    return store.state;
   },
-  dispatch,
-  aiStep: () => dispatch(nextAiAction(state)),
+  dispatch: (action) => store.dispatch(action),
+  aiStep: () => store.dispatch(store.nextAiAction()),
   select(unitId, cityId) {
-    selectedUnitId = unitId;
-    selectedCityId = cityId;
+    store.selectedUnitId = unitId;
+    store.selectedCityId = cityId;
     updatePanels();
   },
   centerOn(tileIndex) {
-    renderer.centerOn(state, tileIndex);
+    renderer.centerOn(store.state, tileIndex);
   },
   tileScreen(tileIndex) {
-    const world = renderer.worldOfTile(state, tileIndex);
+    const world = renderer.worldOfTile(store.state, tileIndex);
     const cam = renderer.cameraInfo;
     return {
       x: (world.x - cam.x) * cam.zoom + canvas.clientWidth / 2,
