@@ -53,6 +53,26 @@ const RESOURCE_NAMES: Record<Resource, string> = {
   fish: 'Pesca',
 };
 
+/**
+ * Icon family: one stroke width (2), rounded caps, 24px grid, currentColor.
+ * Inline SVG keeps the UI asset-free and lets icons inherit text color.
+ */
+const ICON: Record<string, string> = {
+  star: '<svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l2.9 6.1 6.6.75-4.9 4.55 1.32 6.6L12 17.2 6.08 20.5l1.32-6.6-4.9-4.55 6.6-.75z"/></svg>',
+  sword:
+    '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 17.5 3 6V3h3l11.5 11.5"/><path d="M13 19l6-6"/><path d="M16 16l4 4"/><path d="M19 21l2-2"/></svg>',
+  shield:
+    '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.7-7 10-4-1.3-7-5.4-7-10V6z"/></svg>',
+  move: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15"/><path d="M13 6l6 6-6 6"/></svg>',
+  range:
+    '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/></svg>',
+  heart:
+    '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7-4.6-9-9c-1.2-2.7.4-6 3.5-6 2 0 3.5 1.2 4.5 3 1-1.8 2.5-3 4.5-3 3.1 0 4.7 3.3 3.5 6-2 4.4-9 9-9 9z"/></svg>',
+  pop: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.7-3 3-4.6 5.5-4.6S13.8 16 14.5 19"/><circle cx="16.5" cy="9.5" r="2.6"/><path d="M15.4 14.6c2.3.2 4.3 1.7 5 4.4"/></svg>',
+  flag: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4"/><path d="M5 4h12l-2.5 4L17 12H5"/></svg>',
+  city: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V9l4-3 4 3v12"/><path d="M13 21v-8h6v8"/></svg>',
+};
+
 const ERROR_MESSAGES: Record<GameRuleErrorCode, string> = {
   GAME_OVER: 'La partida ha terminado',
   UNIT_NOT_FOUND: 'Esa unidad no existe',
@@ -104,6 +124,11 @@ const renderer = new Renderer(canvas);
 const minimap = new Minimap(minimapCanvas);
 const sound = new SoundManager();
 
+// Phones start further out so the capital's surroundings fit the screen.
+if (window.innerWidth < 760 || window.innerHeight < 480) {
+  renderer.zoomBy(0.7);
+}
+
 let mode: Mode = 'ai';
 let state: GameState = createGame({
   seed: Number(seedInput.value) || 0,
@@ -118,6 +143,17 @@ let toastTimer = 0;
 let mouseX = 0;
 let mouseY = 0;
 const kills = new Map<number, number>();
+const killsByKind = new Map<string, number>();
+const citiesFounded = new Map<number, number>();
+const citiesConquered = new Map<number, number>();
+const milestones: { turn: number; text: string }[] = [];
+
+function recordMilestone(text: string): void {
+  milestones.push({ turn: state.turn, text });
+  if (milestones.length > 40) {
+    milestones.shift();
+  }
+}
 
 function playerName(id: number): string {
   return mode === 'ai' && id === 1 ? 'IA' : `Jugador ${id + 1}`;
@@ -212,28 +248,41 @@ function handleEvents(before: GameState, events: readonly GameEvent[]): void {
         if (attacker && defender) {
           if (event.defenderDied) {
             kills.set(attacker.ownerId, (kills.get(attacker.ownerId) ?? 0) + 1);
+            const kindKey = `${attacker.ownerId}:${attacker.kind}`;
+            killsByKind.set(kindKey, (killsByKind.get(kindKey) ?? 0) + 1);
             log(`⚔ ${UNIT_NAMES[attacker.kind]} elimina a ${UNIT_NAMES[defender.kind]}`);
           } else {
             log(`⚔ ${UNIT_NAMES[attacker.kind]} inflige ${event.damageToDefender} de daño`);
           }
           if (event.attackerDied) {
             kills.set(defender.ownerId, (kills.get(defender.ownerId) ?? 0) + 1);
+            const kindKey = `${defender.ownerId}:${defender.kind}`;
+            killsByKind.set(kindKey, (killsByKind.get(kindKey) ?? 0) + 1);
             log(`💥 ${UNIT_NAMES[attacker.kind]} cae en el contraataque`);
           }
         }
         if (event.promotedUnitId !== null) {
           log('★ Unidad promovida a veterana');
+          recordMilestone('Una unidad asciende a veterana');
           sound.play('levelup');
         }
         break;
       }
       case 'cityCaptured':
         sound.play('capture');
-        log(
-          event.founded
-            ? `🏘 ${playerName(event.byPlayer)} funda una ciudad`
-            : `🏰 ${playerName(event.byPlayer)} captura ${event.capital ? 'la CAPITAL enemiga' : 'una ciudad'}`,
-        );
+        if (event.founded) {
+          citiesFounded.set(event.byPlayer, (citiesFounded.get(event.byPlayer) ?? 0) + 1);
+          log(`🏘 ${playerName(event.byPlayer)} funda una ciudad`);
+          recordMilestone(`${playerName(event.byPlayer)} funda una ciudad`);
+        } else {
+          citiesConquered.set(event.byPlayer, (citiesConquered.get(event.byPlayer) ?? 0) + 1);
+          log(
+            `🏰 ${playerName(event.byPlayer)} captura ${event.capital ? 'la CAPITAL enemiga' : 'una ciudad'}`,
+          );
+          recordMilestone(
+            `${playerName(event.byPlayer)} captura ${event.capital ? 'la capital enemiga' : 'una ciudad'}`,
+          );
+        }
         break;
       case 'unitTrained':
         sound.play('train');
@@ -254,6 +303,7 @@ function handleEvents(before: GameState, events: readonly GameEvent[]): void {
         break;
       case 'playerEliminated':
         log(`☠ ${playerName(event.playerId)} ha sido eliminado`);
+        recordMilestone(`${playerName(event.playerId)} cae eliminado`);
         break;
       case 'gameWon':
         sound.play('victory');
@@ -330,10 +380,13 @@ function updatePanels(): void {
   starsLabel.title = `Ingresos ${gross} · Mantenimiento ${upkeep}`;
   endTurnButton.disabled = !humanTurn();
   renderInspector();
+  // Mobile: the inspector is a bottom sheet that only appears when there is
+  // something actionable selected; the board keeps the whole screen otherwise.
+  document.body.classList.toggle('sheet-open', Boolean(selectedUnit() || selectedCity()));
 }
 
-function statRow(label: string, value: string | number): string {
-  return `<span>${label}<b>${value}</b></span>`;
+function statRow(label: string, value: string | number, icon = ''): string {
+  return `<span>${icon}${label}<b>${value}</b></span>`;
 }
 
 function renderInspector(): void {
@@ -367,17 +420,17 @@ function renderUnitPanel(unit: Unit): void {
       ${unit.veteran ? '<span title="Veterana">★</span>' : ''}</h3>
       <div class="bar"><i style="width:${Math.round((unit.hp / cap) * 100)}%"></i></div>
       <div class="statgrid">
-        ${statRow('Vida', `${unit.hp}/${cap}`)}
-        ${statRow('Ataque', stats.attack)}
-        ${statRow('Defensa', stats.defense)}
-        ${statRow('Movimiento', stats.movement)}
-        ${statRow('Alcance', stats.range)}
-        ${statRow('Bajas', unit.kills)}
+        ${statRow('Vida', `${unit.hp}/${cap}`, ICON['heart'])}
+        ${statRow('Ataque', stats.attack, ICON['sword'])}
+        ${statRow('Defensa', stats.defense, ICON['shield'])}
+        ${statRow('Movimiento', stats.movement, ICON['move'])}
+        ${statRow('Alcance', stats.range, ICON['range'])}
+        ${statRow('Bajas', unit.kills, ICON['flag'])}
       </div>
       <div class="hint">${
         unit.hasMoved && unit.hasAttacked
           ? 'Sin acciones este turno.'
-          : 'Haz clic en una casilla clara para mover, o en un enemigo marcado en rojo para atacar.'
+          : 'Toca una casilla clara para mover, o un enemigo marcado en rojo para atacar.'
       }</div>
       ${canCapture ? '<div class="actions"><button data-action="capture">Capturar <span class="cost">🏳</span></button></div>' : ''}
     </div>`;
@@ -402,7 +455,7 @@ function renderCityPanel(city: City): void {
       const disabled = !own || occupied || player.stars < cost;
       return `<button data-train="${kind}" ${disabled ? 'disabled' : ''}
         title="ATQ ${UNIT_STATS[kind].attack} · DEF ${UNIT_STATS[kind].defense} · MOV ${UNIT_STATS[kind].movement} · ALC ${UNIT_STATS[kind].range}">
-        ${UNIT_NAMES[kind]} <span class="cost">${cost}★</span></button>`;
+        <span class="label">${ICON['sword']!}${UNIT_NAMES[kind]}</span> <span class="cost">${cost}${ICON['star']!}</span></button>`;
     })
     .join('');
 
@@ -413,7 +466,7 @@ function renderCityPanel(city: City): void {
       const info = HARVEST_INFO[resource];
       const disabled = !own || player.stars < info.cost;
       return `<button data-harvest="${t}" ${disabled ? 'disabled' : ''}>
-        ${RESOURCE_NAMES[resource]} (+${info.population} pob.) <span class="cost">${info.cost}★</span></button>`;
+        <span class="label">${ICON['pop']!}${RESOURCE_NAMES[resource]} (+${info.population})</span> <span class="cost">${info.cost}${ICON['star']!}</span></button>`;
     })
     .join('');
 
@@ -470,8 +523,8 @@ function renderHoverPanel(): void {
   }
   inspector.innerHTML = `
     <div class="panel"><h3>Terreno</h3>${tileInfo}</div>
-    <div class="panel">
-      <h3>Atajos</h3>
+    <details class="panel panel-fold">
+      <summary><h3>Atajos</h3></summary>
       <div class="kbd-list">
         <kbd>␣</kbd><span>Terminar turno</span>
         <kbd>N</kbd><span>Siguiente unidad</span>
@@ -480,12 +533,15 @@ function renderHoverPanel(): void {
         <kbd>M</kbd><span>Silenciar</span>
         <kbd>?</kbd><span>Ayuda</span>
       </div>
-    </div>
-    <div class="panel"><div class="hint">
-      Captura aldeas para fundar ciudades, cosecha recursos para subirlas de nivel
-      y toma la capital enemiga para ganar. Cada unidad extra cuesta mantenimiento:
-      la expansión paga a tus ejércitos.
-    </div></div>`;
+    </details>
+    <details class="panel panel-fold">
+      <summary><h3>Cómo ganar</h3></summary>
+      <div class="hint">
+        Captura aldeas para fundar ciudades, cosecha recursos para subirlas de nivel
+        y toma la capital enemiga para ganar. Cada unidad extra cuesta mantenimiento:
+        la expansión paga a tus ejércitos.
+      </div>
+    </details>`;
 }
 
 // ---------- forecast tooltip ----------
@@ -515,26 +571,112 @@ function updateForecast(): void {
 // ---------- overlays ----------
 
 function showVictory(winnerId: number): void {
+  // Per-player stat bars scaled against the best value on the board.
+  const statOf = (map: Map<number, number>, id: number) => map.get(id) ?? 0;
+  const bar = (label: string, value: number, max: number, color: string) => `
+    <div class="statbar">${label}
+      <span class="track"><i style="width:${max > 0 ? Math.round((value / max) * 100) : 0}%; background:${color}"></i></span>
+      <b>${value}</b>
+    </div>`;
+  const maxKills = Math.max(1, ...state.players.map((p) => statOf(kills, p.id)));
+  const maxCities = Math.max(
+    1,
+    ...state.players.map((p) => state.cities.filter((c) => c.ownerId === p.id).length),
+  );
+
   const rows = state.players
-    .map(
-      (p) => `
+    .map((p) => {
+      const color = playerColor(p.id);
+      const cityCount = state.cities.filter((c) => c.ownerId === p.id).length;
+      return `
       <div class="panel">
-        <h3><span class="chip" style="background:${playerColor(p.id)}">${playerName(p.id)}</span></h3>
-        <div class="statgrid">
-          ${statRow('Bajas causadas', kills.get(p.id) ?? 0)}
-          ${statRow('Ciudades', state.cities.filter((c) => c.ownerId === p.id).length)}
-        </div>
-      </div>`,
+        <h3><span class="chip" style="background:${color}">${playerName(p.id)}</span></h3>
+        ${bar('Bajas', statOf(kills, p.id), maxKills, color)}
+        ${bar('Ciudades', cityCount, maxCities, color)}
+        ${bar('Fundadas', statOf(citiesFounded, p.id), maxCities, color)}
+      </div>`;
+    })
+    .join('');
+
+  // Medals: MVP unit kind, best founder, best conqueror.
+  let mvp = '';
+  let mvpKills = 0;
+  for (const [key, count] of killsByKind) {
+    if (count > mvpKills) {
+      mvpKills = count;
+      const [ownerId, kind] = key.split(':');
+      mvp = `${UNIT_NAMES[kind as UnitKind]} (${playerName(Number(ownerId))})`;
+    }
+  }
+  const bestOf = (map: Map<number, number>): string | null => {
+    let best: number | null = null;
+    let bestValue = 0;
+    for (const [id, value] of map) {
+      if (value > bestValue) {
+        bestValue = value;
+        best = id;
+      }
+    }
+    return best === null ? null : `${playerName(best)} (${bestValue})`;
+  };
+  const founder = bestOf(citiesFounded);
+  const conqueror = bestOf(citiesConquered);
+  const medals = [
+    mvp ? `<span class="medal">⚔ <span>MVP</span> <span class="who">${mvp}</span></span>` : '',
+    founder
+      ? `<span class="medal">🏘 <span>Fundador</span> <span class="who">${founder}</span></span>`
+      : '',
+    conqueror
+      ? `<span class="medal">🏰 <span>Conquistador</span> <span class="who">${conqueror}</span></span>`
+      : '',
+  ].join('');
+
+  const timeline = milestones
+    .slice(-10)
+    .map(
+      (m, i) =>
+        `<div class="tl-item" style="animation-delay:${0.35 + i * 0.08}s"><b>T${m.turn}</b> · ${m.text}</div>`,
     )
     .join('');
+
+  const confetti = Array.from({ length: 28 }, (_, i) => {
+    const left = (i * 37) % 100;
+    const colors = [playerColor(winnerId), '#ffcf5c', '#ffffff', playerColor(winnerId)];
+    const duration = 2.6 + ((i * 13) % 17) / 10;
+    const delay = ((i * 7) % 20) / 10;
+    return `<i style="left:${left}%; background:${colors[i % colors.length]}; animation-duration:${duration}s; animation-delay:${delay}s"></i>`;
+  }).join('');
+
   overlay.innerHTML = `
+    <div class="confetti">${confetti}</div>
     <div class="card">
       <h2 class="victory-title">🏆 ¡${playerName(winnerId)} conquista Terranova!</h2>
-      <p style="text-align:center">Victoria por dominación en el turno ${state.turn}.</p>
+      <p class="victory-sub">Victoria por dominación en el turno ${state.turn}.</p>
+      <canvas id="victory-map" class="victory-map" width="188" height="188"></canvas>
       <div class="scoreboard">${rows}</div>
+      <div class="medals">${medals}</div>
+      <h3>Cronología de la partida</h3>
+      <div class="timeline">${timeline || '<div class="tl-item">Una campaña relámpago.</div>'}</div>
       <button id="victory-new-game">Nueva partida</button>
     </div>`;
   overlay.classList.remove('hidden');
+
+  // Final map, fully revealed — the war, at a glance.
+  const victoryCanvas = overlay.querySelector<HTMLCanvasElement>('#victory-map');
+  if (victoryCanvas) {
+    const revealed = new Array<boolean>(state.tiles.length).fill(true);
+    const allVisible = new Set<number>(revealed.map((_, i) => i));
+    new Minimap(victoryCanvas).draw(
+      state,
+      revealed,
+      allVisible,
+      { x: 0, y: 1e9, zoom: 1 },
+      {
+        width: 10,
+        height: 10,
+      },
+    );
+  }
   overlay.querySelector('#victory-new-game')?.addEventListener('click', () => {
     overlay.classList.add('hidden');
     newGame();
@@ -633,6 +775,10 @@ function newGame(): void {
   });
   clearSelection();
   kills.clear();
+  killsByKind.clear();
+  citiesFounded.clear();
+  citiesConquered.clear();
+  milestones.length = 0;
   aiBusy = false;
   eventLog.innerHTML = '';
   overlay.classList.add('hidden');
@@ -644,53 +790,107 @@ function newGame(): void {
   updatePanels();
 }
 
-// Pointer: click vs drag-to-pan.
-let pointerDown = false;
+// Pointer input, mobile-first: one finger taps or pans, two fingers pinch
+// to zoom (and pan via the midpoint), the mouse keeps hover + wheel. All
+// through Pointer Events so the same code serves touch, pen and mouse.
+const activePointers = new Map<number, { x: number; y: number }>();
 let dragged = false;
+let multiTouch = false;
 let lastPointerX = 0;
 let lastPointerY = 0;
+let lastPinchDist = 0;
+
+function pinchState(): { cx: number; cy: number; dist: number } {
+  const [a, b] = [...activePointers.values()];
+  return {
+    cx: (a!.x + b!.x) / 2,
+    cy: (a!.y + b!.y) / 2,
+    dist: Math.hypot(a!.x - b!.x, a!.y - b!.y),
+  };
+}
 
 canvas.addEventListener('pointerdown', (e) => {
-  pointerDown = true;
-  dragged = false;
-  lastPointerX = e.clientX;
-  lastPointerY = e.clientY;
+  try {
+    canvas.setPointerCapture(e.pointerId);
+  } catch {
+    // The pointer may already be gone (fast tap) — tracking still works.
+  }
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (activePointers.size === 1) {
+    dragged = false;
+    multiTouch = false;
+    lastPointerX = e.clientX;
+    lastPointerY = e.clientY;
+  } else if (activePointers.size === 2) {
+    // A second finger cancels the tap and starts a pinch.
+    multiTouch = true;
+    const pinch = pinchState();
+    lastPinchDist = pinch.dist;
+    lastPointerX = pinch.cx;
+    lastPointerY = pinch.cy;
+  }
 });
 
-window.addEventListener('pointermove', (e) => {
+canvas.addEventListener('pointermove', (e) => {
+  if (activePointers.has(e.pointerId)) {
+    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  }
   const rect = canvas.getBoundingClientRect();
   mouseX = e.clientX - rect.left;
   mouseY = e.clientY - rect.top;
-  if (pointerDown) {
+
+  if (activePointers.size >= 2) {
+    const pinch = pinchState();
+    if (lastPinchDist > 0) {
+      renderer.zoomBy(pinch.dist / lastPinchDist);
+    }
+    renderer.panBy(pinch.cx - lastPointerX, pinch.cy - lastPointerY);
+    lastPinchDist = pinch.dist;
+    lastPointerX = pinch.cx;
+    lastPointerY = pinch.cy;
+    return;
+  }
+  if (activePointers.size === 1 && !multiTouch) {
     const dx = e.clientX - lastPointerX;
     const dy = e.clientY - lastPointerY;
-    if (dragged || Math.abs(dx) + Math.abs(dy) > 6) {
+    if (dragged || Math.abs(dx) + Math.abs(dy) > 7) {
       dragged = true;
       canvas.classList.add('dragging');
       renderer.panBy(dx, dy);
       lastPointerX = e.clientX;
       lastPointerY = e.clientY;
     }
-  } else {
-    hoverTile = renderer.screenToTile(state, mouseX, mouseY);
-    if (!selectedUnit() && !selectedCity()) {
-      renderInspector();
-    }
-    updateForecast();
-  }
-});
-
-window.addEventListener('pointerup', (e) => {
-  if (!pointerDown) {
     return;
   }
-  pointerDown = false;
+  // No buttons down: mouse hover (touch never reaches here).
+  hoverTile = renderer.screenToTile(state, mouseX, mouseY);
+  if (!selectedUnit() && !selectedCity()) {
+    renderInspector();
+  }
+  updateForecast();
+});
+
+function endPointer(e: PointerEvent, fire: boolean): void {
+  if (!activePointers.delete(e.pointerId)) {
+    return;
+  }
+  if (activePointers.size > 0) {
+    lastPinchDist = 0;
+    const rest = [...activePointers.values()][0]!;
+    lastPointerX = rest.x;
+    lastPointerY = rest.y;
+    return;
+  }
   canvas.classList.remove('dragging');
-  if (!dragged && e.target === canvas) {
+  if (fire && !dragged && !multiTouch) {
     const rect = canvas.getBoundingClientRect();
     onBoardClick(e.clientX - rect.left, e.clientY - rect.top);
   }
-});
+  multiTouch = false;
+}
+
+canvas.addEventListener('pointerup', (e) => endPointer(e, true));
+canvas.addEventListener('pointercancel', (e) => endPointer(e, false));
 
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
@@ -750,10 +950,17 @@ endTurnButton.addEventListener('click', () => {
     dispatch({ type: 'endTurn' });
   }
 });
-element<HTMLButtonElement>('new-game').addEventListener('click', newGame);
+element<HTMLButtonElement>('new-game').addEventListener('click', () => {
+  element('topbar-config').classList.remove('open');
+  newGame();
+});
 element<HTMLButtonElement>('help-btn').addEventListener('click', showHelp);
 element<HTMLButtonElement>('mute-btn').addEventListener('click', (e) => {
   (e.currentTarget as HTMLButtonElement).textContent = sound.toggleMute() ? '🔇' : '🔊';
+});
+// On small screens the match settings (seed, mode, new game) fold behind ⚙.
+element<HTMLButtonElement>('config-btn').addEventListener('click', () => {
+  element('topbar-config').classList.toggle('open');
 });
 
 new ResizeObserver(() => {

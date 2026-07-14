@@ -1,60 +1,42 @@
 /**
- * Canvas 2D isometric renderer, v2. Pure presentation: it reads GameState and
- * a view descriptor and draws them; it never modifies core state.
+ * Canvas 2D isometric renderer, v3 — the art pass. Pure presentation: it
+ * reads GameState plus a view descriptor and paints them; it never modifies
+ * core state.
  *
- * Visual language: extruded tile blocks for depth, animated shore water,
- * fog-of-war clouds, territory tinting with hard borders, tweened units with
- * health bars, and a particle layer for damage numbers and captures.
+ * Scene order: sky & clouds → tile blocks (varied tops, sand coasts, living
+ * water) → territory → interaction overlays → props & units (row-sorted) →
+ * particles → atmosphere (warm grade, edge haze, vignette).
  */
 import { toCoords } from '../core/grid';
 import type { GameEvent } from '../core/actions';
 import { maxHpOf } from '../core/combat';
-import type { GameState, Terrain, UnitKind } from '../core/types';
+import type { GameState, Terrain } from '../core/types';
 import { Particles, UnitTweens, type WorldPoint } from './animation';
+import { DARK_FACE, LIGHT_FACE, PALETTE, mix, playerColor, shade, tileHash } from './palette';
+import {
+  drawCity,
+  drawFogTile,
+  drawForest,
+  drawMountain,
+  drawResourceProp,
+  drawUnitSprite,
+  drawVillage,
+} from './props';
+
+export { playerColor } from './palette';
 
 export const TILE_W = 64;
 export const TILE_H = 32;
-const BLOCK_DEPTH = 10;
+const BLOCK_DEPTH = 11;
 const WATER_SINK = 5;
 
-const PLAYER_COLORS = ['#ff5d55', '#4d9fff', '#ffd147', '#c07bff'];
-
-export function playerColor(playerId: number): string {
-  return PLAYER_COLORS[playerId % PLAYER_COLORS.length]!;
-}
-
-const UNIT_INITIALS: Record<UnitKind, string> = {
-  warrior: 'G',
-  archer: 'A',
-  rider: 'J',
-  defender: 'D',
-};
-
 const TERRAIN_TOP: Record<Terrain, string> = {
-  field: '#96c358',
-  forest: '#7fb04c',
-  mountain: '#a8b0bd',
-  water: '#3aa7dd',
-  ocean: '#20719f',
+  field: PALETTE.field,
+  forest: PALETTE.forestFloor,
+  mountain: PALETTE.mountainRock,
+  water: PALETTE.waterShore,
+  ocean: PALETTE.waterDeep,
 };
-
-const FOG_COLOR = '#161d2e';
-
-/** Multiply a #rrggbb color's brightness by `factor`. */
-function shade(hex: string, factor: number): string {
-  const n = parseInt(hex.slice(1), 16);
-  const r = Math.min(255, Math.round(((n >> 16) & 0xff) * factor));
-  const g = Math.min(255, Math.round(((n >> 8) & 0xff) * factor));
-  const b = Math.min(255, Math.round((n & 0xff) * factor));
-  return `rgb(${r}, ${g}, ${b})`;
-}
-
-/** Deterministic per-tile jitter for decoration placement. */
-function tileHash(index: number, salt: number): number {
-  let h = (index * 2654435761 + salt * 97) | 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  return ((h >>> 16) & 0xffff) / 0xffff;
-}
 
 export interface DrawOptions {
   readonly viewerId: number;
@@ -71,13 +53,15 @@ export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly tweens = new UnitTweens();
   private readonly particles = new Particles();
+  /** unitId → timestamp until which the sprite flashes white (hit feedback). */
+  private readonly flashes = new Map<number, number>();
 
   private camX = 0;
   private camY = 0;
-  private zoom = 1.4;
+  private zoom = 1.9;
   private targetCamX = 0;
   private targetCamY = 0;
-  private targetZoom = 1.4;
+  private targetZoom = 1.9;
   private shakeAmount = 0;
   private lastFrame = 0;
 
@@ -137,7 +121,8 @@ export class Renderer {
   }
 
   zoomBy(factor: number): void {
-    this.targetZoom = Math.min(2.4, Math.max(0.5, this.targetZoom * factor));
+    // Floor low enough that a phone in portrait can frame the whole map.
+    this.targetZoom = Math.min(3.2, Math.max(0.45, this.targetZoom * factor));
   }
 
   shake(amount: number): void {
@@ -172,16 +157,24 @@ export class Renderer {
             }
           }
           this.particles.damageText(target, `-${event.damageToDefender}`, '#ffe066');
+          if (!event.defenderDied) {
+            this.flashes.set(event.defenderId, now + 200);
+          }
           if (event.damageToAttacker > 0) {
             this.particles.damageText(from, `-${event.damageToAttacker}`, '#ff8f8f');
+            if (!event.attackerDied) {
+              this.flashes.set(event.attackerId, now + 200);
+            }
           }
           if (event.defenderDied || event.attackerDied) {
-            this.particles.burst(event.defenderDied ? target : from, '#ffb0a0', 10);
+            const at = event.defenderDied ? target : from;
+            this.particles.burst(at, '#ffb0a0', 10);
+            this.particles.ring(at, 'rgba(255, 255, 255, 0.8)');
             this.shake(5);
           }
           if (event.promotedUnitId !== null) {
-            this.particles.damageText(from, '★ Veterano', '#ffd147');
-            this.particles.burst(from, '#ffd147', 12);
+            this.particles.damageText(from, '★ Veterano', PALETTE.gold);
+            this.particles.burst(from, PALETTE.gold, 12);
           }
           break;
         }
@@ -189,6 +182,7 @@ export class Renderer {
           const at = this.worldOfTile(state, event.tileIndex);
           this.particles.ring(at, playerColor(event.byPlayer));
           this.particles.burst(at, playerColor(event.byPlayer), 14);
+          this.particles.burst(at, PALETTE.gold, 8);
           this.shake(event.capital ? 7 : 3);
           break;
         }
@@ -197,9 +191,10 @@ export class Renderer {
           break;
         case 'harvested': {
           const at = this.worldOfTile(state, event.tileIndex);
-          this.particles.damageText(at, '+población', '#b8f27c');
+          this.particles.damageText(at, '+población', PALETTE.heal);
+          this.particles.burst(at, PALETTE.heal, 6);
           if (event.leveledUpTo !== null) {
-            this.particles.ring(at, '#ffd147');
+            this.particles.ring(at, PALETTE.gold);
           }
           break;
         }
@@ -208,6 +203,7 @@ export class Renderer {
           if (capital) {
             const at = this.worldOfTile(state, capital.tileIndex);
             this.particles.burst(at, playerColor(event.playerId), 26);
+            this.particles.burst(at, PALETTE.gold, 18);
           }
           break;
         }
@@ -224,7 +220,6 @@ export class Renderer {
     const dt = Math.min(0.05, (now - this.lastFrame) / 1000 || 0.016);
     this.lastFrame = now;
 
-    // Smooth camera & decaying shake.
     this.camX += (this.targetCamX - this.camX) * Math.min(1, dt * 10);
     this.camY += (this.targetCamY - this.camY) * Math.min(1, dt * 10);
     this.zoom += (this.targetZoom - this.zoom) * Math.min(1, dt * 12);
@@ -235,11 +230,7 @@ export class Renderer {
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
 
-    const sky = ctx.createLinearGradient(0, 0, 0, h);
-    sky.addColorStop(0, '#0d1322');
-    sky.addColorStop(1, '#1b2438');
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, w, h);
+    this.drawSky(w, h, now);
 
     ctx.save();
     if (this.shakeAmount > 0) {
@@ -250,6 +241,8 @@ export class Renderer {
       );
     }
 
+    this.drawOceanSkirt(state, now);
+
     const territory = this.territoryMap(state);
     for (let i = 0; i < state.tiles.length; i++) {
       this.drawTile(state, i, opts, territory, now);
@@ -258,10 +251,94 @@ export class Renderer {
     this.particles.draw(ctx, (p) => this.toScreen(p), this.zoom);
     ctx.restore();
 
-    // Soft vignette for depth.
-    const vignette = ctx.createRadialGradient(w / 2, h / 2, h * 0.45, w / 2, h / 2, h);
-    vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    vignette.addColorStop(1, 'rgba(0, 0, 0, 0.38)');
+    this.drawAtmosphere(w, h);
+  }
+
+  /** Bright day sky: blue above, pale warm horizon, drifting white clouds. */
+  private drawSky(w: number, h: number, now: number): void {
+    const { ctx } = this;
+    const sky = ctx.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, PALETTE.skyTop);
+    sky.addColorStop(1, PALETTE.skyHorizon);
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
+
+    const glow = ctx.createRadialGradient(w * 0.5, h * 0.5, h * 0.1, w * 0.5, h * 0.5, h * 0.9);
+    glow.addColorStop(0, PALETTE.glowWarm);
+    glow.addColorStop(1, 'rgba(255, 236, 190, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, w, h);
+
+    for (let i = 0; i < 3; i++) {
+      const cx = ((now / (40000 + i * 12000) + i * 0.37) % 1.3) * w * 1.3 - w * 0.15;
+      const cy = h * (0.12 + i * 0.08);
+      const r = 150 + i * 60;
+      const cloud = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      cloud.addColorStop(0, 'rgba(255, 255, 255, 0.22)');
+      cloud.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = cloud;
+      // The rect must contain the full gradient circle or its clipped edges
+      // read as a ghost rectangle in the sky.
+      ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    }
+  }
+
+  /**
+   * The board never floats in a void: a sunlit sea diamond extends past the
+   * map bounds, so the world reads as an island in a bright ocean.
+   */
+  private drawOceanSkirt(state: GameState, now: number): void {
+    const { ctx } = this;
+    const last = state.mapSize - 1;
+    const pad = TILE_W * 2.2;
+    const north = this.toScreen({ x: 0, y: -pad * (TILE_H / TILE_W) });
+    const east = this.worldOfTile(state, last); // x = last, y = 0
+    const south = this.worldOfTile(state, last * state.mapSize + last);
+    const west = this.worldOfTile(state, last * state.mapSize);
+    const e = this.toScreen({ x: east.x + pad, y: east.y });
+    const s = this.toScreen({ x: south.x, y: south.y + pad * (TILE_H / TILE_W) });
+    const wpt = this.toScreen({ x: west.x - pad, y: west.y });
+
+    ctx.beginPath();
+    ctx.moveTo(north.x, north.y);
+    ctx.lineTo(e.x, e.y);
+    ctx.lineTo(s.x, s.y);
+    ctx.lineTo(wpt.x, wpt.y);
+    ctx.closePath();
+    const sea = ctx.createLinearGradient(north.x, north.y, s.x, s.y);
+    sea.addColorStop(0, shade(PALETTE.waterDeep, 1.08));
+    sea.addColorStop(1, shade(PALETTE.waterDeep, 0.85));
+    ctx.fillStyle = sea;
+    ctx.fill();
+
+    // Sparse drifting glints keep the open sea alive without stealing focus.
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+    for (let i = 0; i < 24; i++) {
+      const t = tileHash(i, 200);
+      const u = tileHash(i, 201);
+      const tw = Math.sin(now / 1100 + i * 2.4);
+      if (tw < 0.55) {
+        continue;
+      }
+      const gx = north.x + (s.x - north.x) * 0.5 + (t - 0.5) * (e.x - wpt.x) * 0.92;
+      const gy = north.y + (s.y - north.y) * (0.08 + u * 0.86);
+      ctx.globalAlpha = (tw - 0.55) * 0.8;
+      ctx.fillRect(gx, gy, 2.4 * this.zoom, 1.1 * this.zoom);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /** A light warm grade — daylight needs no heavy haze or vignette. */
+  private drawAtmosphere(w: number, h: number): void {
+    const { ctx } = this;
+    ctx.globalCompositeOperation = 'soft-light';
+    ctx.fillStyle = 'rgba(255, 214, 150, 0.10)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'source-over';
+
+    const vignette = ctx.createRadialGradient(w / 2, h / 2, h * 0.6, w / 2, h / 2, h * 1.15);
+    vignette.addColorStop(0, 'rgba(20, 40, 70, 0)');
+    vignette.addColorStop(1, 'rgba(20, 40, 70, 0.14)');
     ctx.fillStyle = vignette;
     ctx.fillRect(0, 0, w, h);
   }
@@ -284,16 +361,26 @@ export class Renderer {
     return map;
   }
 
-  private diamond(cx: number, cy: number): void {
+  private diamond(cx: number, cy: number, scale = 1): void {
     const { ctx } = this;
-    const hw = (TILE_W / 2) * this.zoom;
-    const hh = (TILE_H / 2) * this.zoom;
+    const hw = (TILE_W / 2) * this.zoom * scale;
+    const hh = (TILE_H / 2) * this.zoom * scale;
     ctx.beginPath();
     ctx.moveTo(cx, cy - hh);
     ctx.lineTo(cx + hw, cy);
     ctx.lineTo(cx, cy + hh);
     ctx.lineTo(cx - hw, cy);
     ctx.closePath();
+  }
+
+  /** 4-neighbor terrain lookup (E, S, W, N in grid space), or null off-map. */
+  private neighborTerrain(state: GameState, index: number): (Terrain | null)[] {
+    const { x, y } = toCoords(index, state.mapSize);
+    const at = (nx: number, ny: number): Terrain | null =>
+      nx < 0 || nx >= state.mapSize || ny < 0 || ny >= state.mapSize
+        ? null
+        : state.tiles[ny * state.mapSize + nx]!.terrain;
+    return [at(x + 1, y), at(x, y + 1), at(x - 1, y), at(x, y - 1)];
   }
 
   private drawTile(
@@ -309,13 +396,8 @@ export class Renderer {
     const hw = (TILE_W / 2) * this.zoom;
     const hh = (TILE_H / 2) * this.zoom;
 
-    // Unexplored: a flat fog slab, nothing else.
     if (!opts.explored[index]) {
-      this.diamond(screen.x, screen.y);
-      ctx.fillStyle = FOG_COLOR;
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
-      ctx.stroke();
+      drawFogTile(ctx, screen.x, screen.y, hw, hh, index, now);
       return;
     }
 
@@ -324,18 +406,33 @@ export class Renderer {
     const sink = isWater ? WATER_SINK * this.zoom : 0;
     const cx = screen.x;
     const cy = screen.y + sink;
-    const top = TERRAIN_TOP[tile.terrain];
     const depth = BLOCK_DEPTH * this.zoom;
+    const neighbors4 = this.neighborTerrain(state, index);
+    const waterAt = (t: Terrain | null) => t === 'water' || t === 'ocean';
+
+    // Hash-varied top color so no two tiles read identical.
+    const variation = tileHash(index, 1);
+    let top = TERRAIN_TOP[tile.terrain];
+    if (tile.terrain === 'field') {
+      top = mix(PALETTE.field, PALETTE.fieldWarm, variation);
+    } else if (tile.terrain === 'forest') {
+      top = shade(PALETTE.forestFloor, 0.94 + variation * 0.12);
+    } else if (tile.terrain === 'mountain') {
+      top = shade(PALETTE.mountainRock, 0.94 + variation * 0.1);
+    } else {
+      // Water: keep tile-to-tile variation subtle or the sea reads patchy.
+      top = shade(top, 0.98 + variation * 0.04);
+    }
 
     if (!isWater) {
-      // Extruded block: left and right faces give the board its depth.
+      // Extruded block: sunlit west face, shaded south-east face.
       ctx.beginPath();
       ctx.moveTo(cx - hw, cy);
       ctx.lineTo(cx, cy + hh);
       ctx.lineTo(cx, cy + hh + depth);
       ctx.lineTo(cx - hw, cy + depth);
       ctx.closePath();
-      ctx.fillStyle = shade(top, 0.55);
+      ctx.fillStyle = shade(top, LIGHT_FACE);
       ctx.fill();
       ctx.beginPath();
       ctx.moveTo(cx + hw, cy);
@@ -343,33 +440,32 @@ export class Renderer {
       ctx.lineTo(cx, cy + hh + depth);
       ctx.lineTo(cx + hw, cy + depth);
       ctx.closePath();
-      ctx.fillStyle = shade(top, 0.4);
+      ctx.fillStyle = shade(top, DARK_FACE);
       ctx.fill();
     }
 
     // Top face.
     this.diamond(cx, cy);
     if (isWater) {
-      const ripple = 1 + 0.06 * Math.sin(now / 620 + (world.x + world.y) / 40);
+      const ripple = 1 + 0.05 * Math.sin(now / 640 + (world.x + world.y) / 42);
       ctx.fillStyle = shade(top, ripple);
     } else {
       ctx.fillStyle = top;
     }
     ctx.fill();
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.12)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
+
+    if (isWater) {
+      this.drawWaterDetail(state, index, cx, cy, hw, hh, neighbors4, now);
+    } else {
+      this.drawLandDetail(tile.terrain, index, cx, cy, hw, hh, neighbors4, waterAt);
+    }
 
     if (tile.terrain === 'forest') {
-      this.drawTrees(index, cx, cy, now);
-    } else if (tile.terrain === 'mountain') {
-      this.drawMountain(cx, cy);
-    }
-    if (tile.resource) {
-      this.drawResource(tile.resource, cx, cy);
-    }
-    if (tile.hasVillage) {
-      this.drawVillage(cx, cy);
+      // Forest props draw in the entity pass for correct overlap; the floor
+      // gets a soft inner shade suggesting undergrowth.
+      this.diamond(cx, cy, 0.82);
+      ctx.fillStyle = 'rgba(38, 74, 44, 0.18)';
+      ctx.fill();
     }
 
     // Territory tint + hard borders against differently-owned neighbors.
@@ -377,7 +473,7 @@ export class Renderer {
     if (owner !== undefined) {
       this.diamond(cx, cy);
       ctx.fillStyle = playerColor(owner);
-      ctx.globalAlpha = 0.12;
+      ctx.globalAlpha = 0.1;
       ctx.fill();
       ctx.globalAlpha = 1;
       this.drawTerritoryBorders(state, index, owner, territory, cx, cy, hw, hh);
@@ -386,10 +482,11 @@ export class Renderer {
     // Interaction overlays.
     if (opts.reachable.has(index)) {
       this.diamond(cx, cy);
-      ctx.fillStyle = `rgba(255, 255, 255, ${0.3 + 0.09 * Math.sin(now / 260)})`;
+      ctx.fillStyle = `rgba(255, 255, 255, ${0.28 + 0.09 * Math.sin(now / 260)})`;
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
-      ctx.lineWidth = 1.4;
+      this.diamond(cx, cy, 0.9);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.lineWidth = 1.3;
       ctx.stroke();
     }
     if (opts.attackableTiles.has(index)) {
@@ -400,16 +497,204 @@ export class Renderer {
     }
     if (opts.hoverTile === index) {
       this.diamond(cx, cy - 2 * this.zoom);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
       ctx.lineWidth = 1.8;
       ctx.stroke();
     }
 
-    // Explored but out of sight: dim it.
+    // Explored but out of sight: dim the top face and both side faces
+    // (never a bounding rect — it would bleed onto neighboring tiles).
     if (!opts.visible.has(index)) {
+      ctx.fillStyle = 'rgba(52, 74, 105, 0.34)';
       this.diamond(cx, cy);
-      ctx.fillStyle = 'rgba(10, 14, 26, 0.45)';
       ctx.fill();
+      if (!isWater) {
+        ctx.beginPath();
+        ctx.moveTo(cx - hw, cy);
+        ctx.lineTo(cx, cy + hh);
+        ctx.lineTo(cx + hw, cy);
+        ctx.lineTo(cx + hw, cy + depth);
+        ctx.lineTo(cx, cy + hh + depth);
+        ctx.lineTo(cx - hw, cy + depth);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+
+  /** Waves, glints and coastal foam. */
+  private drawWaterDetail(
+    state: GameState,
+    index: number,
+    cx: number,
+    cy: number,
+    hw: number,
+    hh: number,
+    neighbors4: (Terrain | null)[],
+    now: number,
+  ): void {
+    const { ctx } = this;
+    const waterAt = (t: Terrain | null) => t === 'water' || t === 'ocean';
+
+    // Two drifting wave strokes per tile.
+    for (let i = 0; i < 2; i++) {
+      const phase = now / 1400 + tileHash(index, 80 + i) * Math.PI * 2;
+      const wx = cx + (tileHash(index, 82 + i) - 0.5) * hw * 0.9 + Math.sin(phase) * 3 * this.zoom;
+      const wy = cy + (tileHash(index, 84 + i) - 0.5) * hh * 0.8;
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.1 + 0.08 * Math.sin(phase * 1.3)})`;
+      ctx.lineWidth = 1.1 * this.zoom;
+      ctx.beginPath();
+      ctx.moveTo(wx - 4 * this.zoom, wy);
+      ctx.quadraticCurveTo(wx, wy - 1.6 * this.zoom, wx + 4 * this.zoom, wy);
+      ctx.stroke();
+    }
+    // Occasional sun glint.
+    if (tileHash(index, 86) < 0.35) {
+      const tw = Math.sin(now / 900 + tileHash(index, 87) * 40);
+      if (tw > 0.86) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${(tw - 0.86) * 5})`;
+        ctx.beginPath();
+        ctx.arc(
+          cx + (tileHash(index, 88) - 0.5) * hw,
+          cy + (tileHash(index, 89) - 0.5) * hh,
+          1.3 * this.zoom,
+          0,
+          Math.PI * 2,
+        );
+        ctx.fill();
+      }
+    }
+    // Foam along edges that touch land.
+    const edges: Array<[[number, number], [number, number]]> = [
+      [
+        [cx + hw, cy],
+        [cx, cy + hh],
+      ], // E neighbor
+      [
+        [cx, cy + hh],
+        [cx - hw, cy],
+      ], // S
+      [
+        [cx - hw, cy],
+        [cx, cy - hh],
+      ], // W
+      [
+        [cx, cy - hh],
+        [cx + hw, cy],
+      ], // N
+    ];
+    edges.forEach((edge, i) => {
+      const n = neighbors4[i]!;
+      if (n !== null && !waterAt(n)) {
+        const pulse = 0.3 + 0.18 * Math.sin(now / 750 + index + i);
+        ctx.strokeStyle = `rgba(234, 250, 255, ${pulse})`;
+        ctx.lineWidth = 1.8 * this.zoom;
+        ctx.lineCap = 'round';
+        // Inset toward the water center so the foam hugs the shore.
+        const [a, b] = edge;
+        const mxp = (a[0] + b[0]) / 2;
+        const myp = (a[1] + b[1]) / 2;
+        const inset = 0.14;
+        ctx.beginPath();
+        ctx.moveTo(a[0] + (cx - a[0]) * inset, a[1] + (cy - a[1]) * inset);
+        ctx.quadraticCurveTo(
+          mxp + (cx - mxp) * (inset * 0.3),
+          myp + (cy - myp) * (inset * 0.3),
+          b[0] + (cx - b[0]) * inset,
+          b[1] + (cy - b[1]) * inset,
+        );
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+      }
+    });
+
+    // Silence unused warning path: state kept for future depth blending.
+    void state;
+  }
+
+  /** Sand shorelines, grass tufts, flowers, rock speckles. */
+  private drawLandDetail(
+    terrain: Terrain,
+    index: number,
+    cx: number,
+    cy: number,
+    hw: number,
+    hh: number,
+    neighbors4: (Terrain | null)[],
+    waterAt: (t: Terrain | null) => boolean,
+  ): void {
+    const { ctx } = this;
+    // Beach edge wherever land meets water.
+    const corners: Array<[[number, number], [number, number]]> = [
+      [
+        [cx + hw, cy],
+        [cx, cy + hh],
+      ],
+      [
+        [cx, cy + hh],
+        [cx - hw, cy],
+      ],
+      [
+        [cx - hw, cy],
+        [cx, cy - hh],
+      ],
+      [
+        [cx, cy - hh],
+        [cx + hw, cy],
+      ],
+    ];
+    corners.forEach((edge, i) => {
+      if (waterAt(neighbors4[i]!)) {
+        const [a, b] = edge;
+        ctx.strokeStyle = PALETTE.sand;
+        ctx.lineWidth = 3.2 * this.zoom;
+        ctx.lineCap = 'round';
+        const inset = 0.08;
+        ctx.beginPath();
+        ctx.moveTo(a[0] + (cx - a[0]) * inset, a[1] + (cy - a[1]) * inset);
+        ctx.lineTo(b[0] + (cx - b[0]) * inset, b[1] + (cy - b[1]) * inset);
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+      }
+    });
+
+    if (terrain === 'field') {
+      // Grass tufts and the occasional wildflower.
+      ctx.strokeStyle = 'rgba(74, 112, 44, 0.5)';
+      ctx.lineWidth = 1 * this.zoom;
+      for (let i = 0; i < 3; i++) {
+        const gx = cx + (tileHash(index, 90 + i) - 0.5) * hw * 1.1;
+        const gy = cy + (tileHash(index, 93 + i) - 0.5) * hh * 1.1;
+        ctx.beginPath();
+        ctx.moveTo(gx, gy);
+        ctx.lineTo(gx + 1.2 * this.zoom, gy - 2.2 * this.zoom);
+        ctx.stroke();
+      }
+      if (tileHash(index, 96) < 0.12) {
+        ctx.fillStyle = tileHash(index, 97) < 0.5 ? '#ffd9e8' : PALETTE.gold;
+        ctx.beginPath();
+        ctx.arc(
+          cx + (tileHash(index, 98) - 0.5) * hw * 0.9,
+          cy + (tileHash(index, 99) - 0.5) * hh * 0.9,
+          1.2 * this.zoom,
+          0,
+          Math.PI * 2,
+        );
+        ctx.fill();
+      }
+    } else if (terrain === 'mountain') {
+      ctx.fillStyle = 'rgba(90, 86, 104, 0.4)';
+      for (let i = 0; i < 2; i++) {
+        ctx.beginPath();
+        ctx.arc(
+          cx + (tileHash(index, 100 + i) - 0.5) * hw,
+          cy + (tileHash(index, 102 + i) - 0.5) * hh,
+          1.1 * this.zoom,
+          0,
+          Math.PI * 2,
+        );
+        ctx.fill();
+      }
     }
   }
 
@@ -427,10 +712,10 @@ export class Renderer {
     const { x, y } = toCoords(index, state.mapSize);
     const size = state.mapSize;
     const edges: Array<{ nx: number; ny: number; a: [number, number]; b: [number, number] }> = [
-      { nx: x + 1, ny: y, a: [cx + hw, cy], b: [cx, cy + hh] }, // E-S edge
-      { nx: x, ny: y + 1, a: [cx, cy + hh], b: [cx - hw, cy] }, // S-W edge
-      { nx: x - 1, ny: y, a: [cx - hw, cy], b: [cx, cy - hh] }, // W-N edge
-      { nx: x, ny: y - 1, a: [cx, cy - hh], b: [cx + hw, cy] }, // N-E edge
+      { nx: x + 1, ny: y, a: [cx + hw, cy], b: [cx, cy + hh] },
+      { nx: x, ny: y + 1, a: [cx, cy + hh], b: [cx - hw, cy] },
+      { nx: x - 1, ny: y, a: [cx - hw, cy], b: [cx, cy - hh] },
+      { nx: x, ny: y - 1, a: [cx, cy - hh], b: [cx + hw, cy] },
     ];
     ctx.strokeStyle = playerColor(owner);
     ctx.lineWidth = 1.6;
@@ -452,117 +737,57 @@ export class Renderer {
     ctx.globalAlpha = 1;
   }
 
-  private drawTrees(index: number, cx: number, cy: number, now: number): void {
-    const { ctx } = this;
-    const z = this.zoom;
-    for (let i = 0; i < 3; i++) {
-      const ox = (tileHash(index, i) - 0.5) * TILE_W * 0.4 * z;
-      const oy = (tileHash(index, i + 7) - 0.5) * TILE_H * 0.4 * z;
-      const sway = Math.sin(now / 900 + index + i) * 1.2 * z;
-      const baseX = cx + ox;
-      const baseY = cy + oy;
-      const s = (6 + tileHash(index, i + 13) * 3) * z;
-      ctx.beginPath();
-      ctx.moveTo(baseX + sway, baseY - s * 1.7);
-      ctx.lineTo(baseX + s * 0.7, baseY);
-      ctx.lineTo(baseX - s * 0.7, baseY);
-      ctx.closePath();
-      ctx.fillStyle = i % 2 === 0 ? '#2f6b34' : '#3c8040';
-      ctx.fill();
-    }
-  }
-
-  private drawMountain(cx: number, cy: number): void {
-    const { ctx } = this;
-    const z = this.zoom;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - 16 * z);
-    ctx.lineTo(cx + 13 * z, cy + 4 * z);
-    ctx.lineTo(cx - 13 * z, cy + 4 * z);
-    ctx.closePath();
-    ctx.fillStyle = '#8d95a3';
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - 16 * z);
-    ctx.lineTo(cx + 5 * z, cy - 8 * z);
-    ctx.lineTo(cx - 5 * z, cy - 8 * z);
-    ctx.closePath();
-    ctx.fillStyle = '#e9edf4';
-    ctx.fill();
-  }
-
-  private drawResource(resource: string, cx: number, cy: number): void {
-    const { ctx } = this;
-    const z = this.zoom;
-    const x = cx + TILE_W * 0.22 * z;
-    const y = cy + TILE_H * 0.12 * z;
-    switch (resource) {
-      case 'fruit':
-        ctx.beginPath();
-        ctx.arc(x, y, 3.4 * z, 0, Math.PI * 2);
-        ctx.fillStyle = '#ff8a3c';
-        ctx.fill();
-        break;
-      case 'animal':
-        ctx.beginPath();
-        ctx.arc(x - 2 * z, y, 2.8 * z, 0, Math.PI * 2);
-        ctx.arc(x + 2.5 * z, y - 1.5 * z, 2 * z, 0, Math.PI * 2);
-        ctx.fillStyle = '#8a5a3b';
-        ctx.fill();
-        break;
-      case 'metal': {
-        ctx.beginPath();
-        ctx.moveTo(x, y - 3.6 * z);
-        ctx.lineTo(x + 3.2 * z, y);
-        ctx.lineTo(x, y + 3.6 * z);
-        ctx.lineTo(x - 3.2 * z, y);
-        ctx.closePath();
-        ctx.fillStyle = '#dfe6ef';
-        ctx.fill();
-        ctx.strokeStyle = '#7c8794';
-        ctx.stroke();
-        break;
-      }
-      case 'fish':
-        ctx.beginPath();
-        ctx.ellipse(x, y, 3.6 * z, 2 * z, 0, 0, Math.PI * 2);
-        ctx.fillStyle = '#cfe9ff';
-        ctx.fill();
-        ctx.beginPath();
-        ctx.moveTo(x - 3.4 * z, y);
-        ctx.lineTo(x - 6 * z, y - 2 * z);
-        ctx.lineTo(x - 6 * z, y + 2 * z);
-        ctx.closePath();
-        ctx.fill();
-        break;
-    }
-  }
-
-  private drawVillage(cx: number, cy: number): void {
-    const { ctx } = this;
-    const z = this.zoom;
-    ctx.fillStyle = '#8d6e5a';
-    ctx.fillRect(cx - 5 * z, cy - 5 * z, 10 * z, 7 * z);
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - 11 * z);
-    ctx.lineTo(cx + 6.5 * z, cy - 5 * z);
-    ctx.lineTo(cx - 6.5 * z, cy - 5 * z);
-    ctx.closePath();
-    ctx.fillStyle = '#5d4437';
-    ctx.fill();
-  }
-
   private drawEntities(state: GameState, opts: DrawOptions, now: number): void {
     type Entity = { row: number; draw: () => void };
     const entities: Entity[] = [];
+    const { ctx } = this;
+
+    for (let i = 0; i < state.tiles.length; i++) {
+      if (!opts.explored[i]) {
+        continue;
+      }
+      const tile = state.tiles[i]!;
+      const { x, y } = toCoords(i, state.mapSize);
+      const p = this.toScreen(this.worldOfTile(state, i));
+      if (tile.terrain === 'forest') {
+        entities.push({ row: x + y, draw: () => drawForest(ctx, p.x, p.y, this.zoom, i, now) });
+      } else if (tile.terrain === 'mountain') {
+        entities.push({ row: x + y, draw: () => drawMountain(ctx, p.x, p.y, this.zoom, i) });
+      }
+      if (tile.resource) {
+        entities.push({
+          row: x + y,
+          draw: () => drawResourceProp(ctx, p.x, p.y, this.zoom, tile.resource!, i, now),
+        });
+      }
+      if (tile.hasVillage) {
+        entities.push({ row: x + y, draw: () => drawVillage(ctx, p.x, p.y, this.zoom, i) });
+      }
+    }
 
     for (const city of state.cities) {
       if (!opts.explored[city.tileIndex]) {
         continue;
       }
       const { x, y } = toCoords(city.tileIndex, state.mapSize);
-      entities.push({ row: x + y, draw: () => this.drawCity(state, city.id, now) });
+      const p = this.toScreen(this.worldOfTile(state, city.tileIndex));
+      entities.push({
+        row: x + y,
+        draw: () =>
+          drawCity(
+            ctx,
+            p.x,
+            p.y,
+            this.zoom,
+            city.level,
+            city.isCapital,
+            playerColor(city.ownerId),
+            city.id,
+            now,
+          ),
+      });
     }
+
     for (const unit of state.units) {
       const seen = unit.ownerId === opts.viewerId || opts.visible.has(unit.tileIndex);
       if (!seen) {
@@ -571,84 +796,10 @@ export class Renderer {
       const { x, y } = toCoords(unit.tileIndex, state.mapSize);
       entities.push({ row: x + y, draw: () => this.drawUnit(state, unit.id, opts, now) });
     }
+
     entities.sort((a, b) => a.row - b.row);
     for (const entity of entities) {
       entity.draw();
-    }
-  }
-
-  private drawCity(state: GameState, cityId: number, now: number): void {
-    const city = state.cities.find((c) => c.id === cityId);
-    if (!city) {
-      return;
-    }
-    const { ctx } = this;
-    const z = this.zoom;
-    const p = this.toScreen(this.worldOfTile(state, city.tileIndex));
-    const color = playerColor(city.ownerId);
-
-    // Houses.
-    ctx.fillStyle = '#e8e0d2';
-    ctx.fillRect(p.x - 9 * z, p.y - 6 * z, 8 * z, 7 * z);
-    ctx.fillRect(p.x + 1 * z, p.y - 4 * z, 7 * z, 5 * z);
-    ctx.fillStyle = shade(color, 0.85);
-    ctx.beginPath();
-    ctx.moveTo(p.x - 10 * z, p.y - 6 * z);
-    ctx.lineTo(p.x - 5 * z, p.y - 11 * z);
-    ctx.lineTo(p.x, p.y - 6 * z);
-    ctx.closePath();
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y - 4 * z);
-    ctx.lineTo(p.x + 4.5 * z, p.y - 8 * z);
-    ctx.lineTo(p.x + 9 * z, p.y - 4 * z);
-    ctx.closePath();
-    ctx.fill();
-
-    // Waving banner — tall enough to clear a garrisoned unit token.
-    const poleX = p.x - 1 * z;
-    const poleTop = p.y - 32 * z;
-    ctx.strokeStyle = '#d9d2c4';
-    ctx.lineWidth = 1.2 * z;
-    ctx.beginPath();
-    ctx.moveTo(poleX, p.y - 10 * z);
-    ctx.lineTo(poleX, poleTop);
-    ctx.stroke();
-    const wave = Math.sin(now / 320 + cityId) * 2 * z;
-    ctx.beginPath();
-    ctx.moveTo(poleX, poleTop);
-    ctx.quadraticCurveTo(
-      poleX + 5 * z,
-      poleTop + 1.5 * z + wave * 0.4,
-      poleX + 10 * z,
-      poleTop + wave,
-    );
-    ctx.lineTo(poleX + 10 * z, poleTop + 5 * z + wave);
-    ctx.quadraticCurveTo(poleX + 5 * z, poleTop + 6.5 * z + wave * 0.4, poleX, poleTop + 5 * z);
-    ctx.closePath();
-    ctx.fillStyle = color;
-    ctx.fill();
-
-    if (city.isCapital) {
-      ctx.fillStyle = '#ffd147';
-      ctx.font = `${Math.round(9 * z)}px system-ui, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('★', poleX - 6 * z, poleTop + 2 * z);
-    }
-
-    // Level pips under the city.
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
-    for (let i = 0; i < Math.min(city.level, 6); i++) {
-      ctx.beginPath();
-      ctx.arc(
-        p.x - (city.level - 1) * 2.4 * z + i * 4.8 * z,
-        p.y + 6.5 * z,
-        1.7 * z,
-        0,
-        Math.PI * 2,
-      );
-      ctx.fill();
     }
   }
 
@@ -658,71 +809,36 @@ export class Renderer {
       return;
     }
     const { ctx } = this;
-    const z = this.zoom;
     const resting = this.worldOfTile(state, unit.tileIndex);
     const sample = this.tweens.sample(unitId, resting, now);
     const world = sample?.pos ?? resting;
-    const scale = (sample?.scale ?? 1) * z;
     const p = this.toScreen(world);
-    const selected = opts.selectedUnitId === unitId;
-    const lift = selected ? 3 * z : 0;
-    const color = playerColor(unit.ownerId);
     const spent = unit.hasMoved && unit.hasAttacked && unit.ownerId === state.currentPlayerId;
+    const flashUntil = this.flashes.get(unitId) ?? 0;
 
-    // Drop shadow.
-    ctx.beginPath();
-    ctx.ellipse(p.x, p.y + 2 * z, 9 * scale, 4 * scale, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.32)';
-    ctx.fill();
+    drawUnitSprite(ctx, p.x, p.y, this.zoom, unit.kind, playerColor(unit.ownerId), {
+      dim: spent,
+      selected: opts.selectedUnitId === unitId,
+      flash: now < flashUntil,
+      veteran: unit.veteran,
+      scale: sample?.scale ?? 1,
+      bob: Math.sin(now / 520 + unitId * 1.9) * 1.1 * this.zoom,
+    });
 
-    if (selected) {
-      ctx.beginPath();
-      ctx.ellipse(
-        p.x,
-        p.y + 2 * z,
-        (12 + Math.sin(now / 240) * 1.5) * z,
-        (5.5 + Math.sin(now / 240) * 0.7) * z,
-        0,
-        0,
-        Math.PI * 2,
-      );
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.6;
-      ctx.stroke();
-    }
-
-    ctx.save();
-    if (spent) {
-      ctx.globalAlpha = 0.55;
-    }
-    const bodyY = p.y - 11 * z - lift;
-    ctx.beginPath();
-    ctx.arc(p.x, bodyY, 8.5 * scale, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(12, 16, 28, 0.7)';
-    ctx.lineWidth = 1.6;
-    ctx.stroke();
-    ctx.fillStyle = '#ffffff';
-    ctx.font = `bold ${Math.round(8.5 * scale)}px system-ui, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(UNIT_INITIALS[unit.kind], p.x, bodyY + 0.5);
-
-    if (unit.veteran) {
-      ctx.fillStyle = '#ffd147';
-      ctx.font = `${Math.round(7 * scale)}px system-ui, sans-serif`;
-      ctx.fillText('★', p.x + 8 * scale, bodyY - 7 * scale);
-    }
-
-    // Health bar.
+    // Health bar only on wounded units — full-health armies stay clean.
     const cap = maxHpOf(unit);
     const ratio = unit.hp / cap;
-    const barW = 18 * z;
-    ctx.fillStyle = 'rgba(10, 14, 24, 0.75)';
-    ctx.fillRect(p.x - barW / 2, bodyY - 14 * z, barW, 3 * z);
-    ctx.fillStyle = ratio > 0.55 ? '#7ade6a' : ratio > 0.28 ? '#ffd147' : '#ff6a5c';
-    ctx.fillRect(p.x - barW / 2, bodyY - 14 * z, barW * ratio, 3 * z);
-    ctx.restore();
+    if (ratio < 1) {
+      const barW = 16 * this.zoom;
+      const by = p.y - 30 * this.zoom;
+      ctx.fillStyle = 'rgba(12, 15, 26, 0.7)';
+      ctx.beginPath();
+      ctx.roundRect(p.x - barW / 2 - 1, by - 1, barW + 2, 3 * this.zoom + 2, 2);
+      ctx.fill();
+      ctx.fillStyle = ratio > 0.55 ? '#7ade6a' : ratio > 0.28 ? PALETTE.gold : PALETTE.danger;
+      ctx.beginPath();
+      ctx.roundRect(p.x - barW / 2, by, barW * ratio, 3 * this.zoom, 2);
+      ctx.fill();
+    }
   }
 }
