@@ -461,7 +461,22 @@ export interface UnitDrawFlags {
   readonly bob: number;
 }
 
-function drawBody(
+/**
+ * Character design language (see docs/ART.md §3):
+ * - Chibi proportions: the head is ~45% of the figure. Big heads carry
+ *   charm AND read at strategy-map distance — bodies are just color blocks.
+ * - Color blocking 60/30/10: team color dominates the body, neutral steel/
+ *   wood carries the gear, skin+accent do the rest. Ownership reads first.
+ * - One pose per role: warrior squares up, archer stands alert, rider is
+ *   mid-trot, defender plants behind the shield. Job readable from posture.
+ */
+
+const STEEL = '#cfd6e4';
+const STEEL_DARK = '#9aa4ba';
+const INK = '#2b2436';
+
+/** Chibi trooper: feet, two-tone body bean, big head with a sun kiss. */
+function drawChibiBody(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
@@ -469,29 +484,87 @@ function drawBody(
   color: string,
   slim = false,
 ): void {
-  const w = (slim ? 6 : 7.5) * s;
+  // Feet ground the figure (tiny, dark, splayed).
+  ctx.fillStyle = shade(color, 0.5);
   ctx.beginPath();
-  ctx.roundRect(x - w / 2, y - 12 * s, w, 9.5 * s, 3 * s);
+  ctx.ellipse(x - 1.9 * s, y - 0.3 * s, 1.5 * s, 0.9 * s, 0, 0, Math.PI * 2);
+  ctx.ellipse(x + 1.9 * s, y - 0.3 * s, 1.5 * s, 0.9 * s, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Body bean, slightly tapered toward the shoulders.
+  const w = (slim ? 6.2 : 7.8) * s;
+  ctx.beginPath();
+  ctx.moveTo(x - w * 0.38, y - 9.6 * s);
+  ctx.quadraticCurveTo(x - w * 0.62, y - 4 * s, x - w * 0.5, y - 1.6 * s);
+  ctx.quadraticCurveTo(x, y + 0.6 * s, x + w * 0.5, y - 1.6 * s);
+  ctx.quadraticCurveTo(x + w * 0.62, y - 4 * s, x + w * 0.38, y - 9.6 * s);
+  ctx.quadraticCurveTo(x, y - 11 * s, x - w * 0.38, y - 9.6 * s);
+  ctx.closePath();
   ctx.fillStyle = color;
   ctx.fill();
   ctx.strokeStyle = OUTLINE;
-  ctx.lineWidth = 1.2 * s;
+  ctx.lineWidth = 1.1 * s;
   ctx.stroke();
-  // Head
+  // Two-tone: sun on the west flank, shade on the east (same law as houses).
+  ctx.save();
+  ctx.clip();
+  ctx.fillStyle = 'rgba(255, 248, 220, 0.22)';
+  ctx.fillRect(x - w * 0.62, y - 11 * s, w * 0.36, 12 * s);
+  ctx.fillStyle = 'rgba(23, 21, 34, 0.14)';
+  ctx.fillRect(x + w * 0.26, y - 11 * s, w * 0.4, 12 * s);
+  ctx.restore();
+  // Belt keeps the silhouette from being a blob.
+  ctx.fillStyle = shade(color, 0.55);
+  ctx.fillRect(x - w * 0.46, y - 4.6 * s, w * 0.92, 1.2 * s);
+  // Big head: the charm carrier.
   ctx.beginPath();
-  ctx.arc(x, y - 14.5 * s, 3 * s, 0, Math.PI * 2);
+  ctx.arc(x, y - 13 * s, 3.9 * s, 0, Math.PI * 2);
   ctx.fillStyle = SKIN;
   ctx.fill();
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 1.1 * s;
+  ctx.stroke();
+  // Sun kiss top-left of the head.
+  ctx.beginPath();
+  ctx.arc(x - 1.2 * s, y - 14.4 * s, 1.9 * s, Math.PI * 0.8, Math.PI * 1.7);
+  ctx.strokeStyle = 'rgba(255, 250, 230, 0.55)';
+  ctx.lineWidth = 0.9 * s;
   ctx.stroke();
 }
 
-/** Two dot eyes: enough face to make a soldier a character, not a token. */
-function drawFace(ctx: CanvasRenderingContext2D, x: number, y: number, s: number): void {
-  ctx.fillStyle = '#2b2436';
+type Mood = 'determined' | 'calm' | 'stoic';
+
+/** Dot eyes + mood brows: three moods cover every martial personality. */
+function drawFace(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  s: number,
+  mood: Mood = 'calm',
+): void {
+  ctx.fillStyle = INK;
   ctx.beginPath();
-  ctx.arc(x - 1.05 * s, y, 0.55 * s, 0, Math.PI * 2);
-  ctx.arc(x + 1.05 * s, y, 0.55 * s, 0, Math.PI * 2);
+  ctx.arc(x - 1.3 * s, y, 0.62 * s, 0, Math.PI * 2);
+  ctx.arc(x + 1.3 * s, y, 0.62 * s, 0, Math.PI * 2);
   ctx.fill();
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 0.55 * s;
+  if (mood === 'determined') {
+    // Brows angled in: ready for a fight.
+    ctx.beginPath();
+    ctx.moveTo(x - 2.2 * s, y - 1.7 * s);
+    ctx.lineTo(x - 0.6 * s, y - 1.1 * s);
+    ctx.moveTo(x + 2.2 * s, y - 1.7 * s);
+    ctx.lineTo(x + 0.6 * s, y - 1.1 * s);
+    ctx.stroke();
+  } else if (mood === 'stoic') {
+    // Flat brows: nothing gets through.
+    ctx.beginPath();
+    ctx.moveTo(x - 2.1 * s, y - 1.4 * s);
+    ctx.lineTo(x - 0.6 * s, y - 1.4 * s);
+    ctx.moveTo(x + 2.1 * s, y - 1.4 * s);
+    ctx.lineTo(x + 0.6 * s, y - 1.4 * s);
+    ctx.stroke();
+  }
 }
 
 export function drawUnitSprite(
@@ -526,167 +599,364 @@ export function drawUnitSprite(
 
   switch (kind) {
     case 'warrior': {
-      drawBody(ctx, px, y, s, color);
-      drawFace(ctx, px, y - 14.3 * s, s);
-      // Team headband ties the bare head to its army from any distance.
-      ctx.fillStyle = color;
-      ctx.fillRect(px - 3 * s, y - 17 * s, 6 * s, 1.3 * s);
-      // Sword arm (east) and round shield (west, toward the light).
-      ctx.strokeStyle = '#dfe4ee';
-      ctx.lineWidth = 1.5 * s;
+      // The brawler: squared stance, wooden round shield forward, sword up.
+      drawChibiBody(ctx, px, y, s, color);
+      drawFace(ctx, px, y - 12.6 * s, s, 'determined');
+      // Team headband with knot tails — the badge of the rank-and-file.
+      ctx.fillStyle = shade(color, 0.8);
+      ctx.fillRect(px - 3.8 * s, y - 15.3 * s, 7.6 * s, 1.4 * s);
       ctx.beginPath();
-      ctx.moveTo(px + 3.4 * s, y - 8 * s);
-      ctx.lineTo(px + 6.4 * s, y - 13.5 * s);
-      ctx.stroke();
-      ctx.strokeStyle = OUTLINE;
-      ctx.lineWidth = 1 * s;
-      ctx.beginPath();
-      ctx.moveTo(px + 3.6 * s, y - 9.6 * s);
-      ctx.lineTo(px + 5.4 * s, y - 8.6 * s);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(px - 4.4 * s, y - 7.5 * s, 3.2 * s, 0, Math.PI * 2);
-      ctx.fillStyle = '#cfd6e4';
-      ctx.fill();
-      ctx.strokeStyle = OUTLINE;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(px - 4.4 * s, y - 7.5 * s, 1.1 * s, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.fill();
-      break;
-    }
-    case 'archer': {
-      drawBody(ctx, px, y, s, color, true);
-      // Hood over the head.
-      ctx.beginPath();
-      ctx.moveTo(px, y - 18.5 * s);
-      ctx.lineTo(px + 3.4 * s, y - 13 * s);
-      ctx.lineTo(px - 3.4 * s, y - 13 * s);
+      ctx.moveTo(px + 3.8 * s, y - 15 * s);
+      ctx.lineTo(px + 5.6 * s, y - 14 * s);
+      ctx.lineTo(px + 3.9 * s, y - 13.9 * s);
       ctx.closePath();
-      ctx.fillStyle = shade(color, 0.72);
       ctx.fill();
+      // Sword east: blade, crossguard, wooden grip, pommel.
+      ctx.strokeStyle = STEEL;
+      ctx.lineWidth = 1.6 * s;
+      ctx.beginPath();
+      ctx.moveTo(px + 4.6 * s, y - 8.2 * s);
+      ctx.lineTo(px + 7.6 * s, y - 15 * s);
+      ctx.stroke();
       ctx.strokeStyle = OUTLINE;
-      ctx.lineWidth = 1 * s;
+      ctx.lineWidth = 0.9 * s;
+      ctx.beginPath();
+      ctx.moveTo(px + 3.5 * s, y - 9.2 * s);
+      ctx.lineTo(px + 5.9 * s, y - 8.1 * s);
       ctx.stroke();
-      drawFace(ctx, px, y - 13.3 * s, s * 0.9);
-      // Bow.
       ctx.strokeStyle = PALETTE.trunk;
-      ctx.lineWidth = 1.4 * s;
+      ctx.lineWidth = 1.3 * s;
       ctx.beginPath();
-      ctx.arc(px + 5 * s, y - 9 * s, 5 * s, -Math.PI / 2.4, Math.PI / 2.4);
+      ctx.moveTo(px + 4.5 * s, y - 8 * s);
+      ctx.lineTo(px + 3.9 * s, y - 6.7 * s);
       ctx.stroke();
-      ctx.strokeStyle = 'rgba(240, 240, 240, 0.8)';
-      ctx.lineWidth = 0.7 * s;
+      ctx.fillStyle = PALETTE.gold;
       ctx.beginPath();
-      ctx.moveTo(px + 6.9 * s, y - 13.5 * s);
-      ctx.lineTo(px + 6.9 * s, y - 4.5 * s);
-      ctx.stroke();
-      break;
-    }
-    case 'rider': {
-      // Mount: bay horse with team saddle cloth.
-      softShadow(ctx, px, py + 2.6 * z, 10 * s, 3.4 * s);
-      ctx.fillStyle = '#b9895c';
+      ctx.arc(px + 3.8 * s, y - 6.4 * s, 0.7 * s, 0, Math.PI * 2);
+      ctx.fill();
+      // Round wooden shield west, team ring, steel boss.
       ctx.beginPath();
-      ctx.ellipse(px, y - 6.5 * s, 7.5 * s, 4 * s, 0, 0, Math.PI * 2);
+      ctx.arc(px - 5 * s, y - 6.2 * s, 3.5 * s, 0, Math.PI * 2);
+      ctx.fillStyle = shade(PALETTE.trunk, 1.15);
       ctx.fill();
       ctx.strokeStyle = OUTLINE;
       ctx.lineWidth = 1.1 * s;
       ctx.stroke();
-      // Legs.
-      ctx.strokeStyle = '#96683f';
-      ctx.lineWidth = 1.4 * s;
       ctx.beginPath();
-      ctx.moveTo(px - 4.5 * s, y - 3.4 * s);
-      ctx.lineTo(px - 4.5 * s, y + 0.6 * s);
-      ctx.moveTo(px + 4 * s, y - 3.4 * s);
-      ctx.lineTo(px + 4 * s, y + 0.6 * s);
+      ctx.arc(px - 5 * s, y - 6.2 * s, 2.3 * s, 0, Math.PI * 2);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1 * s;
       ctx.stroke();
-      // Neck and head.
-      ctx.fillStyle = '#b9895c';
       ctx.beginPath();
-      ctx.ellipse(px - 7.5 * s, y - 10 * s, 2.4 * s, 3.6 * s, -0.5, 0, Math.PI * 2);
+      ctx.arc(px - 5 * s, y - 6.2 * s, 1 * s, 0, Math.PI * 2);
+      ctx.fillStyle = STEEL;
       ctx.fill();
-      // Saddle cloth + rider.
-      ctx.fillStyle = color;
-      ctx.fillRect(px - 2.6 * s, y - 9.4 * s, 5.2 * s, 3.4 * s);
+      break;
+    }
+    case 'archer': {
+      // The scout: slim, hooded, quiver on the back, arrow already nocked.
+      // Quiver first so it peeks from behind the west shoulder.
+      ctx.save();
+      ctx.translate(px - 3.6 * s, y - 8.5 * s);
+      ctx.rotate(-0.42);
+      ctx.fillStyle = shade(PALETTE.trunk, 0.85);
       ctx.beginPath();
-      ctx.roundRect(px - 2 * s, y - 14 * s, 4 * s, 5.5 * s, 1.8 * s);
+      ctx.roundRect(-1.1 * s, -3.4 * s, 2.2 * s, 6 * s, 1 * s);
+      ctx.fill();
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 0.9 * s;
+      ctx.stroke();
+      // Fletchings peeking out, in team color.
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(-0.5 * s, -3.9 * s, 0.7 * s, 0, Math.PI * 2);
+      ctx.arc(0.6 * s, -4.3 * s, 0.7 * s, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      drawChibiBody(ctx, px, y, s, color, true);
+      // Pointed hood in a darker team shade; face window stays open.
+      ctx.beginPath();
+      ctx.arc(px, y - 13 * s, 4.4 * s, 0, Math.PI * 2);
+      ctx.fillStyle = shade(color, 0.68);
+      ctx.fill();
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 1 * s;
+      ctx.stroke();
+      // Hood tip flops back east.
+      ctx.beginPath();
+      ctx.moveTo(px + 1 * s, y - 17 * s);
+      ctx.quadraticCurveTo(px + 4.4 * s, y - 19.6 * s, px + 4 * s, y - 15.8 * s);
+      ctx.quadraticCurveTo(px + 3 * s, y - 15.2 * s, px + 1.8 * s, y - 15.9 * s);
+      ctx.closePath();
+      ctx.fillStyle = shade(color, 0.68);
+      ctx.fill();
+      ctx.stroke();
+      // Face window.
+      ctx.beginPath();
+      ctx.ellipse(px, y - 12.4 * s, 2.7 * s, 2.9 * s, 0, 0, Math.PI * 2);
+      ctx.fillStyle = SKIN;
+      ctx.fill();
+      drawFace(ctx, px, y - 12.4 * s, s * 0.95, 'calm');
+      // Bow east with drawn string and a nocked arrow.
+      ctx.strokeStyle = PALETTE.trunk;
+      ctx.lineWidth = 1.5 * s;
+      ctx.beginPath();
+      ctx.arc(px + 5.2 * s, y - 8.5 * s, 5.5 * s, -Math.PI / 2.3, Math.PI / 2.3);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(240, 240, 240, 0.85)';
+      ctx.lineWidth = 0.7 * s;
+      ctx.beginPath();
+      ctx.moveTo(px + 7.2 * s, y - 13.4 * s);
+      ctx.lineTo(px + 7.2 * s, y - 3.6 * s);
+      ctx.stroke();
+      // Arrow: shaft to the string, steel head past the bow.
+      ctx.strokeStyle = shade(PALETTE.trunk, 1.25);
+      ctx.lineWidth = 0.8 * s;
+      ctx.beginPath();
+      ctx.moveTo(px + 7.2 * s, y - 8.5 * s);
+      ctx.lineTo(px + 11.6 * s, y - 8.5 * s);
+      ctx.stroke();
+      ctx.fillStyle = STEEL;
+      ctx.beginPath();
+      ctx.moveTo(px + 12.6 * s, y - 8.5 * s);
+      ctx.lineTo(px + 11.2 * s, y - 9.3 * s);
+      ctx.lineTo(px + 11.2 * s, y - 7.7 * s);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+    case 'rider': {
+      // The lancer: horse mid-trot (one leg lifted), mane, tail, tack —
+      // motion built into the pose, not just a token on a bigger token.
+      const HORSE = '#c08b5e';
+      const HORSE_DARK = shade(HORSE, 0.62);
+      softShadow(ctx, px, py + 2.6 * z, 10.5 * s, 3.4 * s);
+      // Far legs first (shaded).
+      ctx.strokeStyle = HORSE_DARK;
+      ctx.lineWidth = 1.6 * s;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(px - 3.6 * s, y - 4.5 * s);
+      ctx.lineTo(px - 3 * s, y - 0.2 * s);
+      ctx.moveTo(px + 5.4 * s, y - 4.5 * s);
+      ctx.lineTo(px + 6 * s, y - 0.2 * s);
+      ctx.stroke();
+      // Body.
+      ctx.fillStyle = HORSE;
+      ctx.beginPath();
+      ctx.ellipse(px + 0.5 * s, y - 6.8 * s, 8 * s, 4.3 * s, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 1.1 * s;
+      ctx.stroke();
+      // Near legs: front one lifted mid-trot, hooves darker.
+      ctx.strokeStyle = HORSE;
+      ctx.lineWidth = 1.7 * s;
+      ctx.beginPath();
+      ctx.moveTo(px - 5 * s, y - 4.5 * s);
+      ctx.lineTo(px - 6.6 * s, y - 2.2 * s); // lifted, bent forward
+      ctx.moveTo(px + 4 * s, y - 4.2 * s);
+      ctx.lineTo(px + 3.6 * s, y + 0.6 * s);
+      ctx.stroke();
+      ctx.fillStyle = HORSE_DARK;
+      ctx.beginPath();
+      ctx.arc(px - 6.8 * s, y - 2 * s, 0.8 * s, 0, Math.PI * 2);
+      ctx.arc(px + 3.6 * s, y + 0.7 * s, 0.8 * s, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineCap = 'butt';
+      // Neck rising west, then the head with muzzle, ears, eye.
+      ctx.fillStyle = HORSE;
+      ctx.beginPath();
+      ctx.moveTo(px - 4.6 * s, y - 9.4 * s);
+      ctx.quadraticCurveTo(px - 7.8 * s, y - 12.4 * s, px - 8.4 * s, y - 13.2 * s);
+      ctx.lineTo(px - 6 * s, y - 14 * s);
+      ctx.quadraticCurveTo(px - 4 * s, y - 11 * s, px - 2.6 * s, y - 9.8 * s);
+      ctx.closePath();
       ctx.fill();
       ctx.strokeStyle = OUTLINE;
       ctx.lineWidth = 1 * s;
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(px, y - 15.8 * s, 2.2 * s, 0, Math.PI * 2);
+      ctx.ellipse(px - 8.8 * s, y - 13 * s, 2.5 * s, 1.7 * s, -0.3, 0, Math.PI * 2);
+      ctx.fillStyle = HORSE;
+      ctx.fill();
+      ctx.stroke();
+      // Muzzle + nostril.
+      ctx.beginPath();
+      ctx.ellipse(px - 10.6 * s, y - 12.4 * s, 1.2 * s, 0.9 * s, -0.3, 0, Math.PI * 2);
+      ctx.fillStyle = shade(HORSE, 1.18);
+      ctx.fill();
+      ctx.fillStyle = INK;
+      ctx.beginPath();
+      ctx.arc(px - 10.9 * s, y - 12.3 * s, 0.3 * s, 0, Math.PI * 2);
+      ctx.fill();
+      // Ears + eye.
+      ctx.fillStyle = HORSE;
+      ctx.beginPath();
+      ctx.moveTo(px - 7.6 * s, y - 14.6 * s);
+      ctx.lineTo(px - 6.9 * s, y - 16.3 * s);
+      ctx.lineTo(px - 6.2 * s, y - 14.6 * s);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 0.7 * s;
+      ctx.stroke();
+      ctx.fillStyle = INK;
+      ctx.beginPath();
+      ctx.arc(px - 8.2 * s, y - 13.5 * s, 0.5 * s, 0, Math.PI * 2);
+      ctx.fill();
+      // Mane along the neck crest + forelock, and a flowing tail.
+      ctx.strokeStyle = HORSE_DARK;
+      ctx.lineWidth = 1.6 * s;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(px - 6.6 * s, y - 14.4 * s);
+      ctx.quadraticCurveTo(px - 4.4 * s, y - 12 * s, px - 2.8 * s, y - 10.2 * s);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(px + 8.2 * s, y - 8 * s);
+      ctx.quadraticCurveTo(px + 10.6 * s, y - 6.6 * s, px + 10 * s, y - 3.2 * s);
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+      // Saddle cloth in team color with gold trim, plus girth strap.
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.roundRect(px - 2.4 * s, y - 10.4 * s, 6 * s, 4.6 * s, 0.8 * s);
+      ctx.fill();
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 0.9 * s;
+      ctx.stroke();
+      ctx.strokeStyle = PALETTE.gold;
+      ctx.lineWidth = 0.7 * s;
+      ctx.beginPath();
+      ctx.moveTo(px - 2.2 * s, y - 6.4 * s);
+      ctx.lineTo(px + 3.4 * s, y - 6.4 * s);
+      ctx.stroke();
+      // Rider: compact chibi with a plumed cap, leaning into the ride.
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.roundRect(px - 1.7 * s, y - 15.2 * s, 4.2 * s, 6 * s, 1.8 * s);
+      ctx.fill();
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 1 * s;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(px + 0.4 * s, y - 17.2 * s, 2.7 * s, 0, Math.PI * 2);
       ctx.fillStyle = SKIN;
       ctx.fill();
       ctx.stroke();
-      drawFace(ctx, px, y - 15.7 * s, s * 0.75);
-      // Horse eye.
-      ctx.fillStyle = '#2b2436';
+      drawFace(ctx, px + 0.4 * s, y - 17 * s, s * 0.8, 'determined');
+      // Cap + plume sweeping back.
       ctx.beginPath();
-      ctx.arc(px - 8 * s, y - 11 * s, 0.45 * s, 0, Math.PI * 2);
+      ctx.arc(px + 0.4 * s, y - 17.6 * s, 2.75 * s, Math.PI * 0.95, Math.PI * 2.02);
+      ctx.fillStyle = shade(color, 0.68);
       ctx.fill();
-      // Lance with pennant.
-      ctx.strokeStyle = '#d9d2c4';
+      ctx.strokeStyle = shade(color, 0.68);
+      ctx.lineWidth = 1.1 * s;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(px + 1.6 * s, y - 20 * s);
+      ctx.quadraticCurveTo(px + 4 * s, y - 20.6 * s, px + 5 * s, y - 18.8 * s);
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+      // Lance with steel tip and team pennant.
+      ctx.strokeStyle = shade(PALETTE.trunk, 1.2);
       ctx.lineWidth = 1 * s;
       ctx.beginPath();
-      ctx.moveTo(px + 4.4 * s, y - 6 * s);
-      ctx.lineTo(px + 7.5 * s, y - 19 * s);
+      ctx.moveTo(px + 4.2 * s, y - 7.5 * s);
+      ctx.lineTo(px + 8.6 * s, y - 21 * s);
       ctx.stroke();
+      ctx.fillStyle = STEEL;
       ctx.beginPath();
-      ctx.moveTo(px + 7.5 * s, y - 19 * s);
-      ctx.lineTo(px + 11 * s, y - 17.6 * s);
-      ctx.lineTo(px + 7.9 * s, y - 16.4 * s);
+      ctx.moveTo(px + 8.6 * s, y - 21 * s);
+      ctx.lineTo(px + 9.8 * s, y - 22.4 * s);
+      ctx.lineTo(px + 9.1 * s, y - 20.2 * s);
       ctx.closePath();
+      ctx.fill();
       ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(px + 8.3 * s, y - 20 * s);
+      ctx.lineTo(px + 12 * s, y - 18.8 * s);
+      ctx.lineTo(px + 8.8 * s, y - 17.4 * s);
+      ctx.closePath();
       ctx.fill();
       break;
     }
     case 'defender': {
-      drawBody(ctx, px, y, s, color);
-      drawFace(ctx, px, y - 13.9 * s, s * 0.9);
-      // Helmet.
+      // The wall: planted stance, full helm, tower shield hiding the body.
+      drawChibiBody(ctx, px, y, s, color);
+      drawFace(ctx, px, y - 12.6 * s, s * 0.95, 'stoic');
+      // Full helm: dome, nose guard between the eyes, team crest on top.
       ctx.beginPath();
-      ctx.arc(px, y - 15 * s, 3.1 * s, Math.PI, 0);
-      ctx.fillStyle = '#cfd6e4';
+      ctx.arc(px, y - 13.6 * s, 4 * s, Math.PI * 0.97, Math.PI * 2.03);
+      ctx.fillStyle = STEEL;
       ctx.fill();
       ctx.strokeStyle = OUTLINE;
       ctx.lineWidth = 1 * s;
       ctx.stroke();
-      // Tall kite shield covering the body.
+      ctx.fillStyle = STEEL_DARK;
+      ctx.fillRect(px - 4 * s, y - 13.9 * s, 8 * s, 0.9 * s);
+      ctx.fillRect(px - 0.55 * s, y - 13.9 * s, 1.1 * s, 2.6 * s); // nose guard
+      // Crest ridge in team color.
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.2 * s;
       ctx.beginPath();
-      ctx.moveTo(px - 3.6 * s, y - 12.5 * s);
-      ctx.lineTo(px + 3.6 * s, y - 12.5 * s);
-      ctx.lineTo(px + 3.6 * s, y - 6 * s);
-      ctx.quadraticCurveTo(px + 3.6 * s, y - 2.4 * s, px, y - 1.4 * s);
-      ctx.quadraticCurveTo(px - 3.6 * s, y - 2.4 * s, px - 3.6 * s, y - 6 * s);
-      ctx.closePath();
-      ctx.fillStyle = '#cfd6e4';
-      ctx.fill();
+      ctx.arc(px, y - 13.6 * s, 4.5 * s, Math.PI * 1.25, Math.PI * 1.75);
       ctx.stroke();
-      // Team chevron on the shield.
+      // Tower shield: rounded top, pointed base, team chevron, rivets.
+      const sw = 4.4 * s;
       ctx.beginPath();
-      ctx.moveTo(px - 2.4 * s, y - 10.5 * s);
-      ctx.lineTo(px, y - 7.8 * s);
-      ctx.lineTo(px + 2.4 * s, y - 10.5 * s);
-      ctx.lineTo(px + 2.4 * s, y - 8.4 * s);
-      ctx.lineTo(px, y - 5.8 * s);
-      ctx.lineTo(px - 2.4 * s, y - 8.4 * s);
+      ctx.moveTo(px - sw, y - 10.6 * s);
+      ctx.quadraticCurveTo(px, y - 12.2 * s, px + sw, y - 10.6 * s);
+      ctx.lineTo(px + sw, y - 4.6 * s);
+      ctx.quadraticCurveTo(px + sw, y - 1.6 * s, px, y - 0.4 * s);
+      ctx.quadraticCurveTo(px - sw, y - 1.6 * s, px - sw, y - 4.6 * s);
+      ctx.closePath();
+      ctx.fillStyle = STEEL;
+      ctx.fill();
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 1.1 * s;
+      ctx.stroke();
+      // Sunlit west edge of the shield (one light, always).
+      ctx.strokeStyle = 'rgba(255, 250, 230, 0.6)';
+      ctx.lineWidth = 0.8 * s;
+      ctx.beginPath();
+      ctx.moveTo(px - sw + 0.8 * s, y - 10.3 * s);
+      ctx.lineTo(px - sw + 0.8 * s, y - 3.4 * s);
+      ctx.stroke();
+      // Team chevron.
+      ctx.beginPath();
+      ctx.moveTo(px - 2.7 * s, y - 9.3 * s);
+      ctx.lineTo(px, y - 6.4 * s);
+      ctx.lineTo(px + 2.7 * s, y - 9.3 * s);
+      ctx.lineTo(px + 2.7 * s, y - 7 * s);
+      ctx.lineTo(px, y - 4.1 * s);
+      ctx.lineTo(px - 2.7 * s, y - 7 * s);
       ctx.closePath();
       ctx.fillStyle = color;
+      ctx.fill();
+      // Rivets.
+      ctx.fillStyle = STEEL_DARK;
+      ctx.beginPath();
+      ctx.arc(px - 3.1 * s, y - 10.1 * s, 0.45 * s, 0, Math.PI * 2);
+      ctx.arc(px + 3.1 * s, y - 10.1 * s, 0.45 * s, 0, Math.PI * 2);
+      ctx.arc(px, y - 1.6 * s, 0.45 * s, 0, Math.PI * 2);
       ctx.fill();
       break;
     }
   }
 
   if (flags.veteran) {
-    ctx.fillStyle = PALETTE.gold;
+    // West-top corner: clear of sword, bow, lance and helm crest.
     ctx.font = `${Math.round(7 * s)}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('★', px + 7 * s, y - 17 * s);
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2 * s;
+    ctx.strokeText('★', px - 6.5 * s, y - 18 * s);
+    ctx.fillStyle = PALETTE.gold;
+    ctx.fillText('★', px - 6.5 * s, y - 18 * s);
   }
 
   if (flags.flash) {

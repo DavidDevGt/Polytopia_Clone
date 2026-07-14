@@ -40,12 +40,27 @@ explica el porqué.
 ## 3. Forma y escala
 
 - **Siluetas primero**: cada cosa debe reconocerse por contorno en 24 px.
-  Guerrero = escudo redondo + cinta de equipo; arquero = capucha+arco; jinete
-  = caballo+lanza; defensor = escudo de lágrima. Nada comparte silueta.
-- **Los soldados son personajes**: escala 1.35× sobre el tile base, dos ojos
-  de punto (`drawFace`) — suficiente cara para ser alguien, no una ficha. La
-  barra de vida solo aparece en unidades heridas: un ejército sano se lee
-  limpio.
+  Guerrero = escudo redondo + espada en alto; arquero = capucha + arco con
+  flecha; jinete = caballo al trote + lanza con banderín; defensor = yelmo
+  completo + escudo torre. Nada comparte silueta.
+- **Los soldados son personajes, no fichas** (proporciones chibi): la cabeza
+  es ~45 % de la figura — las cabezas grandes cargan el encanto Y se leen a
+  distancia de mapa. Cuerpo de dos tonos (sol al oeste, sombra al este, la
+  misma ley que las casas), pies que anclan, cinturón que corta la silueta,
+  beso de sol en la cabeza.
+- **Bloques de color 60/30/10**: el color de equipo domina el cuerpo (60),
+  acero/madera neutros llevan el equipo (30), piel y acentos oro el resto
+  (10). La propiedad se lee antes que el rol; el rol antes que el detalle.
+- **Una pose por rol**: el guerrero se planta en guardia, el arquero vigila
+  con la flecha lista, el jinete va a medio trote (pata delantera en el
+  aire), el defensor se atrinchera tras el escudo. El oficio se lee en la
+  postura sin leer ningún tooltip.
+- **Tres estados de ánimo en cejas** (`determined`/`calm`/`stoic`): guerrero
+  y jinete decididos, arquero sereno, defensor imperturbable. Dos puntos y
+  dos trazos bastan para dar alma.
+- La barra de vida solo aparece en unidades heridas: un ejército sano se lee
+  limpio. La ★ de veterano vive en la esquina noroeste, libre de espadas,
+  arcos, lanzas y crestas.
 - Diamante base 64×32, bloques extruidos 11 px. Props entre 0.5 y 1.5 tiles de
   alto; solo capillas/capiteles superan el tile (foco visual merecido).
 - **Imperfección controlada**: todo prop toma jitter determinista de
