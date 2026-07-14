@@ -1,10 +1,11 @@
 # Terranova — Guía de dirección de arte (v0.3)
 
-Identidad: **una maqueta de mesa iluminada al atardecer**. Un mundo cálido en
-miniatura — dioramas nítidos, materiales mate, una sola luz — leído desde una
-UI de cristal oscuro que desaparece cuando no se necesita. Inspiración en los
-principios (no en las formas) de Polytopia, Dorfromantik, Bad North, Islanders
-y Mini Motorways: claridad ante todo, pocas siluetas, mucha intención.
+Identidad: **una maqueta de juguete a pleno sol**. Un mundo cálido en
+miniatura — dioramas nítidos, materiales mate, una sola luz de mediodía, mar
+brillante alrededor — leído desde una UI de cristal oscuro que desaparece
+cuando no se necesita. Inspiración en los principios (no en las formas) de
+Polytopia, Dorfromantik, Bad North, Islanders y Mini Motorways: claridad ante
+todo, pocas siluetas, mucha intención.
 
 La fuente de verdad ejecutable es `src/render/palette.ts`. Este documento
 explica el porqué.
@@ -16,9 +17,11 @@ explica el porqué.
   excepciones: casas, montañas, torres y bloques de terreno comparten factores.
 - **Sombras de contacto**, no proyectadas: una elipse suave
   (`rgba(20,24,38,0.28)`) bajo cada prop. Es el "ambient occlusion" del juego.
-- **Atmósfera en 3 capas**: gradiente de cielo (índigo → azul cálido), glow
-  cálido radial tras el tablero, y al final un wash `soft-light` naranja
-  (bloom/grading barato), bruma azulada en la base y viñeta al 30 %.
+- **Atmósfera de día**: gradiente de cielo (azul → celeste pálido), glow
+  cálido radial tras el tablero, nubes blancas a la deriva, y un wash
+  `soft-light` cálido muy suave con viñeta al 14 %. El tablero nunca flota
+  en un vacío: una **falda de océano** soleado se extiende más allá de los
+  bordes del mapa, así el mundo lee como isla en un mar brillante.
 
 ## 2. Color
 
@@ -28,15 +31,21 @@ explica el porqué.
   en cosas que un jugador posee (banderas, techos, bordes, unidades). El
   terreno jamás los usa — así la lectura de propiedad es instantánea.
 - Primarios de mundo: pradera `#a4c964`→`#b5d16d`, bosque `#8db956`, roca
-  `#a9a4b5`, arena `#ecd9a0`, agua costera `#4fc0e8`, océano `#1d6fa6`.
+  `#a9a4b5`, arena `#ecd9a0`, agua costera `#54c6ec`, océano `#2b85c0`.
+- El agua varía poco entre casillas (±4 %): el mar debe leer como una masa,
+  no como parches.
 - UI: tinta `#0e1119`, cristal `rgba(18,21,34,0.82)` con blur, texto marfil
   `#f0ede4`, acentos oro `#ffcf5c` (acción principal) y coral (peligro).
 
 ## 3. Forma y escala
 
 - **Siluetas primero**: cada cosa debe reconocerse por contorno en 24 px.
-  Guerrero = escudo redondo; arquero = capucha+arco; jinete = caballo+lanza;
-  defensor = escudo de lágrima. Nada comparte silueta.
+  Guerrero = escudo redondo + cinta de equipo; arquero = capucha+arco; jinete
+  = caballo+lanza; defensor = escudo de lágrima. Nada comparte silueta.
+- **Los soldados son personajes**: escala 1.35× sobre el tile base, dos ojos
+  de punto (`drawFace`) — suficiente cara para ser alguien, no una ficha. La
+  barra de vida solo aparece en unidades heridas: un ejército sano se lee
+  limpio.
 - Diamante base 64×32, bloques extruidos 11 px. Props entre 0.5 y 1.5 tiles de
   alto; solo capillas/capiteles superan el tile (foco visual merecido).
 - **Imperfección controlada**: todo prop toma jitter determinista de
@@ -54,16 +63,20 @@ explica el porqué.
   más oscuro que la costa.
 - **Montañas**: 2 picos por casilla (principal + secundario) con cara lit/
   sombra, nieve opcional por hash, base integrada con sombra de contacto.
-- **Bosques**: 3–5 coníferas de dos capas con tronco, tamaños y posiciones
-  por hash, balanceo suave por viento (`sin(now/1100)`), claro implícito
-  (suelo sombreado).
-- **Ciudades que crecen**: plaza de tierra siempre; Nv1 2 casas → Nv2 3 casas
-  - murallas frontales → Nv3+ **torreón** con almenas y estandarte colgante;
-    capital = torreón alto con friso dorado y ★. Bandera ondeante en toda ciudad.
+- **Bosques**: 2–3 coníferas GORDAS de dos capas con tronco — pocas y grandes
+  para que la silueta domine la casilla —, tamaños y posiciones por hash,
+  balanceo suave por viento (`sin(now/1100)`).
+- **Ciudades que crecen casa a casa**: plaza de tierra siempre; cada nivel
+  añade una casa visible (Nv1 2 casas → Nv4+ 5 casas), Nv2+ murallas
+  frontales, Nv3+ **torreón** con almenas y estandarte colgante; capital =
+  torreón alto con friso dorado y ★. El nivel se lee desde el mapa sin abrir
+  ningún panel. Bandera ondeante en toda ciudad.
 - **Recursos como miniaturas**: árbol frutal cargado, res pastando, veta con
   cristal que destella, banco de peces saltando dentro de anillos de agua.
-- **Niebla**: no negro plano — nubes en dos tonos (`fog1/fog2`) con billows
-  desplazados por hash y deriva lenta.
+- **Niebla = nubes BLANCAS** (regla Polytopia): lo inexplorado es un manto de
+  nubes esponjosas (`fog1/fog2` claros) con billows por hash, sombra fría en
+  el borde sur y deriva lenta. La oscuridad queda prohibida: el mundo invita
+  a explorar, no amenaza.
 
 ## 5. Movimiento
 
@@ -90,7 +103,10 @@ redondeadas, `currentColor`. Estrella (economía), espada (ataque), escudo
   estado, (4) el inspector. Nada compite con el tablero: paneles de cristal
   oscuro translúcido con blur que se funden con la escena.
 - El inspector es contextual: muestra solo lo tocado; los overlays (log,
-  minimapa, pronóstico) flotan sobre el mundo sin marcos opacos.
+  minimapa, pronóstico) flotan sobre el mundo sin marcos opacos. La ayuda
+  (atajos, cómo ganar) vive en paneles plegables cerrados por defecto.
+- El minimapa habla el mismo idioma que el mundo: lo inexplorado es blanco
+  nube, nunca negro.
 - Victoria = **secuencia**, no modal: confeti, título con pop, mapa final
   revelado, barras de estadísticas animadas por jugador, medallas (MVP,
   Fundador, Conquistador) y cronología de hitos con entrada escalonada.

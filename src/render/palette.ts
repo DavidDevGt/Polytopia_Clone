@@ -19,8 +19,8 @@ export const PALETTE = {
   forestFloor: '#8db956',
   mountainRock: '#a9a4b5',
   sand: '#ecd9a0',
-  waterShore: '#4fc0e8',
-  waterDeep: '#1d6fa6',
+  waterShore: '#54c6ec',
+  waterDeep: '#2b85c0',
   foam: '#eafaff',
 
   // Props
@@ -42,12 +42,12 @@ export const PALETTE = {
   metal: '#e4e9f2',
   fish: '#d7ecff',
 
-  // Atmosphere
-  skyTop: '#101726',
-  skyHorizon: '#2c3550',
-  glowWarm: 'rgba(255, 196, 120, 0.10)',
-  fog1: '#232c42',
-  fog2: '#2b3550',
+  // Atmosphere — bright day: the board is a sunlit toy world, not a night scene.
+  skyTop: '#4da7cf',
+  skyHorizon: '#a5dcea',
+  glowWarm: 'rgba(255, 236, 190, 0.22)',
+  fog1: '#dfe7f0', // unexplored: soft white cloud base…
+  fog2: '#f6f9fd', // …with brighter billows on top (never darkness)
   fogRim: '#39456600',
 
   // Feedback

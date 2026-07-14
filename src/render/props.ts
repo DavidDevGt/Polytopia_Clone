@@ -72,12 +72,13 @@ export function drawForest(
   index: number,
   now: number,
 ): void {
-  const count = 3 + Math.floor(tileHash(index, 2) * 3); // 3..5 trees
+  // Fewer, FAT trees: at readable zoom each conifer must own its silhouette.
+  const count = 2 + (tileHash(index, 2) > 0.45 ? 1 : 0); // 2..3 trees
   for (let i = 0; i < count; i++) {
     // Cluster toward the center with per-tree jitter; sort by row for depth.
-    const ox = (tileHash(index, 10 + i) - 0.5) * 34 * z;
-    const oy = (tileHash(index, 20 + i) - 0.5) * 14 * z;
-    const s = (5.5 + tileHash(index, 30 + i) * 3.5) * z;
+    const ox = (tileHash(index, 10 + i) - 0.5) * 26 * z;
+    const oy = (tileHash(index, 20 + i) - 0.5) * 11 * z;
+    const s = (8.5 + tileHash(index, 30 + i) * 4) * z;
     const sway = Math.sin(now / 1100 + index * 1.7 + i * 2.1) * 1.3 * z;
     drawTree(ctx, cx + ox, cy + oy + 2 * z, s, sway, tileHash(index, 40 + i));
   }
@@ -92,21 +93,22 @@ export function drawMountain(
   z: number,
   index: number,
 ): void {
-  softShadow(ctx, cx + 3 * z, cy + 5 * z, 16 * z, 5 * z);
+  softShadow(ctx, cx + 3 * z, cy + 5 * z, 20 * z, 6 * z);
   interface Peak {
     x: number;
     h: number;
     w: number;
     snow: boolean;
   }
+  // Peaks that DOMINATE the tile — a mountain is a landmark, not a pebble.
   const main: Peak = {
     x: (tileHash(index, 3) - 0.5) * 8 * z,
-    h: (17 + tileHash(index, 4) * 7) * z,
-    w: (12 + tileHash(index, 5) * 4) * z,
+    h: (24 + tileHash(index, 4) * 9) * z,
+    w: (16 + tileHash(index, 5) * 5) * z,
     snow: tileHash(index, 6) > 0.35,
   };
   const side: Peak = {
-    x: main.x + (tileHash(index, 7) > 0.5 ? 1 : -1) * (9 + tileHash(index, 8) * 4) * z,
+    x: main.x + (tileHash(index, 7) > 0.5 ? 1 : -1) * (12 + tileHash(index, 8) * 5) * z,
     h: main.h * (0.5 + tileHash(index, 9) * 0.25),
     w: main.w * 0.7,
     snow: tileHash(index, 6) > 0.7,
@@ -189,7 +191,7 @@ export function drawVillage(
   index: number,
 ): void {
   const jitter = (tileHash(index, 55) - 0.5) * 4 * z;
-  drawHouse(ctx, cx - 4 * z + jitter, cy + 3 * z, 11 * z, 6.5 * z, PALETTE.trunk);
+  drawHouse(ctx, cx - 4 * z + jitter, cy + 3 * z, 14 * z, 8 * z, PALETTE.trunk);
   // A tiny neutral pennant tells "claimable" from afar.
   ctx.strokeStyle = '#d9d2c4';
   ctx.lineWidth = 1 * z;
@@ -273,10 +275,10 @@ export function drawCity(
 ): void {
   // Dirt plaza grounds the settlement on the tile.
   ctx.beginPath();
-  ctx.moveTo(cx, cy - 9 * z);
-  ctx.lineTo(cx + 20 * z, cy + 1 * z);
-  ctx.lineTo(cx, cy + 11 * z);
-  ctx.lineTo(cx - 20 * z, cy + 1 * z);
+  ctx.moveTo(cx, cy - 10 * z);
+  ctx.lineTo(cx + 24 * z, cy + 2 * z);
+  ctx.lineTo(cx, cy + 13 * z);
+  ctx.lineTo(cx - 24 * z, cy + 2 * z);
   ctx.closePath();
   ctx.fillStyle = PALETTE.plaza;
   ctx.globalAlpha = 0.9;
@@ -286,16 +288,34 @@ export function drawCity(
   if (level >= 2) {
     drawWallFront(ctx, cx, cy, z);
   }
-  // Houses multiply with the level.
-  drawHouse(ctx, cx - 9 * z, cy + 4 * z, 9 * z, 5.5 * z, team);
-  if (level >= 1) {
-    drawHouse(ctx, cx + 8 * z, cy + 6 * z, 8 * z, 5 * z, PALETTE.trunk);
-  }
-  if (level >= 2) {
-    drawHouse(ctx, cx + 12 * z, cy + 0.5 * z, 8.5 * z, 5 * z, team);
+  // Polytopia rule made ours: every level visibly adds a house, so a city's
+  // size is readable from the map alone. Spots ring the plaza north→south.
+  const spots: Array<{ x: number; y: number; w: number }> = [
+    { x: -11, y: 4, w: 12 },
+    { x: 10, y: 6.5, w: 11 },
+    { x: 14, y: 0, w: 10.5 },
+    { x: -15, y: -1.5, w: 10 },
+    { x: 3, y: 11, w: 10 },
+  ];
+  const houseCount = Math.min(1 + level, spots.length);
+  const houseAt = (i: number): void => {
+    const spot = spots[i]!;
+    const roof = i % 2 === 0 ? team : PALETTE.trunk;
+    drawHouse(ctx, cx + spot.x * z, cy + spot.y * z, spot.w * z, spot.w * 0.6 * z, roof);
+  };
+  // Back-row houses first, then the keep, then front-row houses over it.
+  for (let i = 0; i < houseCount; i++) {
+    if (spots[i]!.y < 0) {
+      houseAt(i);
+    }
   }
   if (level >= 3) {
     drawKeep(ctx, cx - 1 * z, cy - 1 * z, z, team, isCapital);
+  }
+  for (let i = 0; i < houseCount; i++) {
+    if (spots[i]!.y >= 0) {
+      houseAt(i);
+    }
   }
 
   // Waving standard: every settlement flies its owner's colors.
@@ -465,6 +485,15 @@ function drawBody(
   ctx.stroke();
 }
 
+/** Two dot eyes: enough face to make a soldier a character, not a token. */
+function drawFace(ctx: CanvasRenderingContext2D, x: number, y: number, s: number): void {
+  ctx.fillStyle = '#2b2436';
+  ctx.beginPath();
+  ctx.arc(x - 1.05 * s, y, 0.55 * s, 0, Math.PI * 2);
+  ctx.arc(x + 1.05 * s, y, 0.55 * s, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 export function drawUnitSprite(
   ctx: CanvasRenderingContext2D,
   px: number,
@@ -474,7 +503,8 @@ export function drawUnitSprite(
   color: string,
   flags: UnitDrawFlags,
 ): void {
-  const s = z * flags.scale;
+  // 1.35× base scale: a soldier should read as a person at default zoom.
+  const s = z * flags.scale * 1.35;
   const y = py + flags.bob;
   ctx.save();
   if (flags.dim) {
@@ -497,6 +527,10 @@ export function drawUnitSprite(
   switch (kind) {
     case 'warrior': {
       drawBody(ctx, px, y, s, color);
+      drawFace(ctx, px, y - 14.3 * s, s);
+      // Team headband ties the bare head to its army from any distance.
+      ctx.fillStyle = color;
+      ctx.fillRect(px - 3 * s, y - 17 * s, 6 * s, 1.3 * s);
       // Sword arm (east) and round shield (west, toward the light).
       ctx.strokeStyle = '#dfe4ee';
       ctx.lineWidth = 1.5 * s;
@@ -535,6 +569,7 @@ export function drawUnitSprite(
       ctx.strokeStyle = OUTLINE;
       ctx.lineWidth = 1 * s;
       ctx.stroke();
+      drawFace(ctx, px, y - 13.3 * s, s * 0.9);
       // Bow.
       ctx.strokeStyle = PALETTE.trunk;
       ctx.lineWidth = 1.4 * s;
@@ -587,6 +622,12 @@ export function drawUnitSprite(
       ctx.fillStyle = SKIN;
       ctx.fill();
       ctx.stroke();
+      drawFace(ctx, px, y - 15.7 * s, s * 0.75);
+      // Horse eye.
+      ctx.fillStyle = '#2b2436';
+      ctx.beginPath();
+      ctx.arc(px - 8 * s, y - 11 * s, 0.45 * s, 0, Math.PI * 2);
+      ctx.fill();
       // Lance with pennant.
       ctx.strokeStyle = '#d9d2c4';
       ctx.lineWidth = 1 * s;
@@ -605,6 +646,7 @@ export function drawUnitSprite(
     }
     case 'defender': {
       drawBody(ctx, px, y, s, color);
+      drawFace(ctx, px, y - 13.9 * s, s * 0.9);
       // Helmet.
       ctx.beginPath();
       ctx.arc(px, y - 15 * s, 3.1 * s, Math.PI, 0);
@@ -669,23 +711,34 @@ export function drawFogTile(
   index: number,
   now: number,
 ): void {
+  // Polytopia-style unexplored: puffy WHITE clouds that invite exploring,
+  // never darkness. Slightly oversized so neighboring clouds merge seamlessly.
   const drift = Math.sin(now / 5200 + index * 0.7) * hh * 0.08;
+  const ow = hw * 1.04;
+  const oh = hh * 1.08;
   ctx.beginPath();
-  ctx.moveTo(cx, cy - hh);
-  ctx.lineTo(cx + hw, cy);
-  ctx.lineTo(cx, cy + hh);
-  ctx.lineTo(cx - hw, cy);
+  ctx.moveTo(cx, cy - oh);
+  ctx.lineTo(cx + ow, cy);
+  ctx.lineTo(cx, cy + oh);
+  ctx.lineTo(cx - ow, cy);
   ctx.closePath();
   ctx.fillStyle = PALETTE.fog1;
   ctx.fill();
-  // Cloud billows give the fog a soft, alive surface.
+
+  // Cool under-shadow at the south edge gives the cloud sheet volume.
+  ctx.fillStyle = 'rgba(158, 178, 205, 0.28)';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + oh * 0.42, ow * 0.62, oh * 0.34, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Bright billows, sunlit from the top-left like everything else.
   ctx.fillStyle = PALETTE.fog2;
   ctx.beginPath();
   ctx.ellipse(
     cx + (tileHash(index, 70) - 0.5) * hw * 0.7,
-    cy + (tileHash(index, 71) - 0.5) * hh * 0.5 + drift,
-    hw * 0.42,
-    hh * 0.4,
+    cy + (tileHash(index, 71) - 0.55) * hh * 0.5 + drift,
+    hw * 0.5,
+    hh * 0.48,
     0,
     0,
     Math.PI * 2,
@@ -694,8 +747,19 @@ export function drawFogTile(
   ctx.beginPath();
   ctx.ellipse(
     cx + (tileHash(index, 72) - 0.5) * hw * 0.8,
-    cy + (tileHash(index, 73) - 0.5) * hh * 0.6 - drift,
-    hw * 0.3,
+    cy + (tileHash(index, 73) - 0.6) * hh * 0.6 - drift,
+    hw * 0.36,
+    hh * 0.36,
+    0,
+    0,
+    Math.PI * 2,
+  );
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(
+    cx + (tileHash(index, 74) - 0.5) * hw * 0.5,
+    cy + (tileHash(index, 75) - 0.4) * hh * 0.4 + drift * 0.6,
+    hw * 0.28,
     hh * 0.3,
     0,
     0,

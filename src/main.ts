@@ -515,8 +515,8 @@ function renderHoverPanel(): void {
   }
   inspector.innerHTML = `
     <div class="panel"><h3>Terreno</h3>${tileInfo}</div>
-    <div class="panel">
-      <h3>Atajos</h3>
+    <details class="panel panel-fold">
+      <summary><h3>Atajos</h3></summary>
       <div class="kbd-list">
         <kbd>␣</kbd><span>Terminar turno</span>
         <kbd>N</kbd><span>Siguiente unidad</span>
@@ -525,12 +525,15 @@ function renderHoverPanel(): void {
         <kbd>M</kbd><span>Silenciar</span>
         <kbd>?</kbd><span>Ayuda</span>
       </div>
-    </div>
-    <div class="panel"><div class="hint">
-      Captura aldeas para fundar ciudades, cosecha recursos para subirlas de nivel
-      y toma la capital enemiga para ganar. Cada unidad extra cuesta mantenimiento:
-      la expansión paga a tus ejércitos.
-    </div></div>`;
+    </details>
+    <details class="panel panel-fold">
+      <summary><h3>Cómo ganar</h3></summary>
+      <div class="hint">
+        Captura aldeas para fundar ciudades, cosecha recursos para subirlas de nivel
+        y toma la capital enemiga para ganar. Cada unidad extra cuesta mantenimiento:
+        la expansión paga a tus ejércitos.
+      </div>
+    </details>`;
 }
 
 // ---------- forecast tooltip ----------

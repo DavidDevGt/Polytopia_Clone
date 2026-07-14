@@ -58,10 +58,10 @@ export class Renderer {
 
   private camX = 0;
   private camY = 0;
-  private zoom = 1.4;
+  private zoom = 1.9;
   private targetCamX = 0;
   private targetCamY = 0;
-  private targetZoom = 1.4;
+  private targetZoom = 1.9;
   private shakeAmount = 0;
   private lastFrame = 0;
 
@@ -121,7 +121,7 @@ export class Renderer {
   }
 
   zoomBy(factor: number): void {
-    this.targetZoom = Math.min(2.4, Math.max(0.5, this.targetZoom * factor));
+    this.targetZoom = Math.min(3.2, Math.max(0.6, this.targetZoom * factor));
   }
 
   shake(amount: number): void {
@@ -240,6 +240,8 @@ export class Renderer {
       );
     }
 
+    this.drawOceanSkirt(state, now);
+
     const territory = this.territoryMap(state);
     for (let i = 0; i < state.tiles.length; i++) {
       this.drawTile(state, i, opts, territory, now);
@@ -251,7 +253,7 @@ export class Renderer {
     this.drawAtmosphere(w, h);
   }
 
-  /** Deep dusk sky with a warm horizon glow and slow drifting clouds. */
+  /** Bright day sky: blue above, pale warm horizon, drifting white clouds. */
   private drawSky(w: number, h: number, now: number): void {
     const { ctx } = this;
     const sky = ctx.createLinearGradient(0, 0, 0, h);
@@ -260,40 +262,82 @@ export class Renderer {
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, w, h);
 
-    const glow = ctx.createRadialGradient(w * 0.5, h * 0.55, h * 0.1, w * 0.5, h * 0.55, h * 0.85);
+    const glow = ctx.createRadialGradient(w * 0.5, h * 0.5, h * 0.1, w * 0.5, h * 0.5, h * 0.9);
     glow.addColorStop(0, PALETTE.glowWarm);
-    glow.addColorStop(1, 'rgba(255, 196, 120, 0)');
+    glow.addColorStop(1, 'rgba(255, 236, 190, 0)');
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, w, h);
 
     for (let i = 0; i < 3; i++) {
       const cx = ((now / (40000 + i * 12000) + i * 0.37) % 1.3) * w * 1.3 - w * 0.15;
-      const cy = h * (0.14 + i * 0.09);
-      const cloud = ctx.createRadialGradient(cx, cy, 0, cx, cy, 130 + i * 60);
-      cloud.addColorStop(0, 'rgba(210, 225, 255, 0.05)');
-      cloud.addColorStop(1, 'rgba(210, 225, 255, 0)');
+      const cy = h * (0.12 + i * 0.08);
+      const r = 150 + i * 60;
+      const cloud = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      cloud.addColorStop(0, 'rgba(255, 255, 255, 0.22)');
+      cloud.addColorStop(1, 'rgba(255, 255, 255, 0)');
       ctx.fillStyle = cloud;
-      ctx.fillRect(cx - 200 - i * 60, cy - 90, 400 + i * 120, 180);
+      // The rect must contain the full gradient circle or its clipped edges
+      // read as a ghost rectangle in the sky.
+      ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
     }
   }
 
-  /** Warm grade, edge haze and a whisper of vignette. */
+  /**
+   * The board never floats in a void: a sunlit sea diamond extends past the
+   * map bounds, so the world reads as an island in a bright ocean.
+   */
+  private drawOceanSkirt(state: GameState, now: number): void {
+    const { ctx } = this;
+    const last = state.mapSize - 1;
+    const pad = TILE_W * 2.2;
+    const north = this.toScreen({ x: 0, y: -pad * (TILE_H / TILE_W) });
+    const east = this.worldOfTile(state, last); // x = last, y = 0
+    const south = this.worldOfTile(state, last * state.mapSize + last);
+    const west = this.worldOfTile(state, last * state.mapSize);
+    const e = this.toScreen({ x: east.x + pad, y: east.y });
+    const s = this.toScreen({ x: south.x, y: south.y + pad * (TILE_H / TILE_W) });
+    const wpt = this.toScreen({ x: west.x - pad, y: west.y });
+
+    ctx.beginPath();
+    ctx.moveTo(north.x, north.y);
+    ctx.lineTo(e.x, e.y);
+    ctx.lineTo(s.x, s.y);
+    ctx.lineTo(wpt.x, wpt.y);
+    ctx.closePath();
+    const sea = ctx.createLinearGradient(north.x, north.y, s.x, s.y);
+    sea.addColorStop(0, shade(PALETTE.waterDeep, 1.08));
+    sea.addColorStop(1, shade(PALETTE.waterDeep, 0.85));
+    ctx.fillStyle = sea;
+    ctx.fill();
+
+    // Sparse drifting glints keep the open sea alive without stealing focus.
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+    for (let i = 0; i < 24; i++) {
+      const t = tileHash(i, 200);
+      const u = tileHash(i, 201);
+      const tw = Math.sin(now / 1100 + i * 2.4);
+      if (tw < 0.55) {
+        continue;
+      }
+      const gx = north.x + (s.x - north.x) * 0.5 + (t - 0.5) * (e.x - wpt.x) * 0.92;
+      const gy = north.y + (s.y - north.y) * (0.08 + u * 0.86);
+      ctx.globalAlpha = (tw - 0.55) * 0.8;
+      ctx.fillRect(gx, gy, 2.4 * this.zoom, 1.1 * this.zoom);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /** A light warm grade — daylight needs no heavy haze or vignette. */
   private drawAtmosphere(w: number, h: number): void {
     const { ctx } = this;
     ctx.globalCompositeOperation = 'soft-light';
-    ctx.fillStyle = 'rgba(255, 187, 120, 0.16)';
+    ctx.fillStyle = 'rgba(255, 214, 150, 0.10)';
     ctx.fillRect(0, 0, w, h);
     ctx.globalCompositeOperation = 'source-over';
 
-    const haze = ctx.createLinearGradient(0, h * 0.72, 0, h);
-    haze.addColorStop(0, 'rgba(44, 53, 80, 0)');
-    haze.addColorStop(1, 'rgba(44, 53, 80, 0.28)');
-    ctx.fillStyle = haze;
-    ctx.fillRect(0, 0, w, h);
-
-    const vignette = ctx.createRadialGradient(w / 2, h / 2, h * 0.5, w / 2, h / 2, h * 1.05);
-    vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    vignette.addColorStop(1, 'rgba(0, 0, 0, 0.3)');
+    const vignette = ctx.createRadialGradient(w / 2, h / 2, h * 0.6, w / 2, h / 2, h * 1.15);
+    vignette.addColorStop(0, 'rgba(20, 40, 70, 0)');
+    vignette.addColorStop(1, 'rgba(20, 40, 70, 0.14)');
     ctx.fillStyle = vignette;
     ctx.fillRect(0, 0, w, h);
   }
@@ -375,7 +419,8 @@ export class Renderer {
     } else if (tile.terrain === 'mountain') {
       top = shade(PALETTE.mountainRock, 0.94 + variation * 0.1);
     } else {
-      top = shade(top, 0.95 + variation * 0.1);
+      // Water: keep tile-to-tile variation subtle or the sea reads patchy.
+      top = shade(top, 0.98 + variation * 0.04);
     }
 
     if (!isWater) {
@@ -459,7 +504,7 @@ export class Renderer {
     // Explored but out of sight: dim the top face and both side faces
     // (never a bounding rect — it would bleed onto neighboring tiles).
     if (!opts.visible.has(index)) {
-      ctx.fillStyle = 'rgba(13, 17, 30, 0.45)';
+      ctx.fillStyle = 'rgba(52, 74, 105, 0.34)';
       this.diamond(cx, cy);
       ctx.fill();
       if (!isWater) {
@@ -779,12 +824,12 @@ export class Renderer {
       bob: Math.sin(now / 520 + unitId * 1.9) * 1.1 * this.zoom,
     });
 
-    // Health bar above the sprite.
+    // Health bar only on wounded units — full-health armies stay clean.
     const cap = maxHpOf(unit);
     const ratio = unit.hp / cap;
-    if (ratio < 1 || !spent) {
+    if (ratio < 1) {
       const barW = 16 * this.zoom;
-      const by = p.y - 24 * this.zoom;
+      const by = p.y - 30 * this.zoom;
       ctx.fillStyle = 'rgba(12, 15, 26, 0.7)';
       ctx.beginPath();
       ctx.roundRect(p.x - barW / 2 - 1, by - 1, barW + 2, 3 * this.zoom + 2, 2);

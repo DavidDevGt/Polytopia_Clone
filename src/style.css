@@ -413,6 +413,35 @@ button:disabled {
   }
 }
 
+/* Collapsible help panels: closed by default so the world keeps the stage. */
+.panel-fold summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+}
+
+.panel-fold summary::-webkit-details-marker {
+  display: none;
+}
+
+.panel-fold summary::after {
+  content: '▸';
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  transition: transform 0.18s var(--ease-pop);
+}
+
+.panel-fold[open] summary::after {
+  transform: rotate(90deg);
+}
+
+.panel-fold summary h3 {
+  margin: 0;
+}
+
 .statgrid {
   display: grid;
   grid-template-columns: 1fr 1fr;

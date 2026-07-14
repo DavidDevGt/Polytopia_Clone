@@ -44,10 +44,13 @@ export class Minimap {
     for (let i = 0; i < state.tiles.length; i++) {
       const { x, y } = toCoords(i, state.mapSize);
       if (!explored[i]) {
+        // Unexplored is cloud-white, matching the world's fog language.
+        ctx.fillStyle = '#dfe6f0';
+        ctx.fillRect(x * cell, y * cell, cell, cell);
         continue;
       }
       ctx.fillStyle = MINI_COLORS[state.tiles[i]!.terrain];
-      ctx.globalAlpha = visible.has(i) ? 1 : 0.5;
+      ctx.globalAlpha = visible.has(i) ? 1 : 0.55;
       ctx.fillRect(x * cell, y * cell, cell, cell);
     }
     ctx.globalAlpha = 1;
