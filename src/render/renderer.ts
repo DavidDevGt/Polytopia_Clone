@@ -121,7 +121,8 @@ export class Renderer {
   }
 
   zoomBy(factor: number): void {
-    this.targetZoom = Math.min(3.2, Math.max(0.6, this.targetZoom * factor));
+    // Floor low enough that a phone in portrait can frame the whole map.
+    this.targetZoom = Math.min(3.2, Math.max(0.45, this.targetZoom * factor));
   }
 
   shake(amount: number): void {

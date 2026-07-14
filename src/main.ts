@@ -124,6 +124,11 @@ const renderer = new Renderer(canvas);
 const minimap = new Minimap(minimapCanvas);
 const sound = new SoundManager();
 
+// Phones start further out so the capital's surroundings fit the screen.
+if (window.innerWidth < 760 || window.innerHeight < 480) {
+  renderer.zoomBy(0.7);
+}
+
 let mode: Mode = 'ai';
 let state: GameState = createGame({
   seed: Number(seedInput.value) || 0,
@@ -375,6 +380,9 @@ function updatePanels(): void {
   starsLabel.title = `Ingresos ${gross} · Mantenimiento ${upkeep}`;
   endTurnButton.disabled = !humanTurn();
   renderInspector();
+  // Mobile: the inspector is a bottom sheet that only appears when there is
+  // something actionable selected; the board keeps the whole screen otherwise.
+  document.body.classList.toggle('sheet-open', Boolean(selectedUnit() || selectedCity()));
 }
 
 function statRow(label: string, value: string | number, icon = ''): string {
@@ -422,7 +430,7 @@ function renderUnitPanel(unit: Unit): void {
       <div class="hint">${
         unit.hasMoved && unit.hasAttacked
           ? 'Sin acciones este turno.'
-          : 'Haz clic en una casilla clara para mover, o en un enemigo marcado en rojo para atacar.'
+          : 'Toca una casilla clara para mover, o un enemigo marcado en rojo para atacar.'
       }</div>
       ${canCapture ? '<div class="actions"><button data-action="capture">Capturar <span class="cost">🏳</span></button></div>' : ''}
     </div>`;
@@ -782,53 +790,107 @@ function newGame(): void {
   updatePanels();
 }
 
-// Pointer: click vs drag-to-pan.
-let pointerDown = false;
+// Pointer input, mobile-first: one finger taps or pans, two fingers pinch
+// to zoom (and pan via the midpoint), the mouse keeps hover + wheel. All
+// through Pointer Events so the same code serves touch, pen and mouse.
+const activePointers = new Map<number, { x: number; y: number }>();
 let dragged = false;
+let multiTouch = false;
 let lastPointerX = 0;
 let lastPointerY = 0;
+let lastPinchDist = 0;
+
+function pinchState(): { cx: number; cy: number; dist: number } {
+  const [a, b] = [...activePointers.values()];
+  return {
+    cx: (a!.x + b!.x) / 2,
+    cy: (a!.y + b!.y) / 2,
+    dist: Math.hypot(a!.x - b!.x, a!.y - b!.y),
+  };
+}
 
 canvas.addEventListener('pointerdown', (e) => {
-  pointerDown = true;
-  dragged = false;
-  lastPointerX = e.clientX;
-  lastPointerY = e.clientY;
+  try {
+    canvas.setPointerCapture(e.pointerId);
+  } catch {
+    // The pointer may already be gone (fast tap) — tracking still works.
+  }
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (activePointers.size === 1) {
+    dragged = false;
+    multiTouch = false;
+    lastPointerX = e.clientX;
+    lastPointerY = e.clientY;
+  } else if (activePointers.size === 2) {
+    // A second finger cancels the tap and starts a pinch.
+    multiTouch = true;
+    const pinch = pinchState();
+    lastPinchDist = pinch.dist;
+    lastPointerX = pinch.cx;
+    lastPointerY = pinch.cy;
+  }
 });
 
-window.addEventListener('pointermove', (e) => {
+canvas.addEventListener('pointermove', (e) => {
+  if (activePointers.has(e.pointerId)) {
+    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  }
   const rect = canvas.getBoundingClientRect();
   mouseX = e.clientX - rect.left;
   mouseY = e.clientY - rect.top;
-  if (pointerDown) {
+
+  if (activePointers.size >= 2) {
+    const pinch = pinchState();
+    if (lastPinchDist > 0) {
+      renderer.zoomBy(pinch.dist / lastPinchDist);
+    }
+    renderer.panBy(pinch.cx - lastPointerX, pinch.cy - lastPointerY);
+    lastPinchDist = pinch.dist;
+    lastPointerX = pinch.cx;
+    lastPointerY = pinch.cy;
+    return;
+  }
+  if (activePointers.size === 1 && !multiTouch) {
     const dx = e.clientX - lastPointerX;
     const dy = e.clientY - lastPointerY;
-    if (dragged || Math.abs(dx) + Math.abs(dy) > 6) {
+    if (dragged || Math.abs(dx) + Math.abs(dy) > 7) {
       dragged = true;
       canvas.classList.add('dragging');
       renderer.panBy(dx, dy);
       lastPointerX = e.clientX;
       lastPointerY = e.clientY;
     }
-  } else {
-    hoverTile = renderer.screenToTile(state, mouseX, mouseY);
-    if (!selectedUnit() && !selectedCity()) {
-      renderInspector();
-    }
-    updateForecast();
-  }
-});
-
-window.addEventListener('pointerup', (e) => {
-  if (!pointerDown) {
     return;
   }
-  pointerDown = false;
+  // No buttons down: mouse hover (touch never reaches here).
+  hoverTile = renderer.screenToTile(state, mouseX, mouseY);
+  if (!selectedUnit() && !selectedCity()) {
+    renderInspector();
+  }
+  updateForecast();
+});
+
+function endPointer(e: PointerEvent, fire: boolean): void {
+  if (!activePointers.delete(e.pointerId)) {
+    return;
+  }
+  if (activePointers.size > 0) {
+    lastPinchDist = 0;
+    const rest = [...activePointers.values()][0]!;
+    lastPointerX = rest.x;
+    lastPointerY = rest.y;
+    return;
+  }
   canvas.classList.remove('dragging');
-  if (!dragged && e.target === canvas) {
+  if (fire && !dragged && !multiTouch) {
     const rect = canvas.getBoundingClientRect();
     onBoardClick(e.clientX - rect.left, e.clientY - rect.top);
   }
-});
+  multiTouch = false;
+}
+
+canvas.addEventListener('pointerup', (e) => endPointer(e, true));
+canvas.addEventListener('pointercancel', (e) => endPointer(e, false));
 
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
@@ -888,10 +950,17 @@ endTurnButton.addEventListener('click', () => {
     dispatch({ type: 'endTurn' });
   }
 });
-element<HTMLButtonElement>('new-game').addEventListener('click', newGame);
+element<HTMLButtonElement>('new-game').addEventListener('click', () => {
+  element('topbar-config').classList.remove('open');
+  newGame();
+});
 element<HTMLButtonElement>('help-btn').addEventListener('click', showHelp);
 element<HTMLButtonElement>('mute-btn').addEventListener('click', (e) => {
   (e.currentTarget as HTMLButtonElement).textContent = sound.toggleMute() ? '🔇' : '🔊';
+});
+// On small screens the match settings (seed, mode, new game) fold behind ⚙.
+element<HTMLButtonElement>('config-btn').addEventListener('click', () => {
+  element('topbar-config').classList.toggle('open');
 });
 
 new ResizeObserver(() => {

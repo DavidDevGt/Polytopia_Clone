@@ -2,7 +2,12 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link
       rel="icon"
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⭐</text></svg>"
@@ -19,18 +24,21 @@
           <span id="stars-label" class="stat stat--stars"></span>
         </div>
         <div class="topbar__right">
-          <label class="field">
-            Semilla
-            <input id="seed-input" type="number" value="42" />
-          </label>
-          <label class="field">
-            Modo
-            <select id="mode-select">
-              <option value="ai">vs IA</option>
-              <option value="hotseat">2 jugadores</option>
-            </select>
-          </label>
-          <button id="new-game" type="button">Nueva partida</button>
+          <div id="topbar-config" class="topbar__config">
+            <label class="field">
+              Semilla
+              <input id="seed-input" type="number" value="42" />
+            </label>
+            <label class="field">
+              Modo
+              <select id="mode-select">
+                <option value="ai">vs IA</option>
+                <option value="hotseat">2 jugadores</option>
+              </select>
+            </label>
+            <button id="new-game" type="button">Nueva partida</button>
+          </div>
+          <button id="config-btn" type="button" class="icon-btn config-btn" title="Partida">⚙</button>
           <button id="mute-btn" type="button" class="icon-btn" title="Silenciar (M)">🔊</button>
           <button id="help-btn" type="button" class="icon-btn" title="Ayuda (?)">?</button>
         </div>

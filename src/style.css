@@ -179,6 +179,17 @@ button:disabled {
   text-align: center;
 }
 
+/* Match settings group; on desktop it's inline, on mobile a ⚙ dropdown. */
+.topbar__config {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.config-btn {
+  display: none;
+}
+
 /* ---------- board area ---------- */
 
 .content {
@@ -199,6 +210,8 @@ button:disabled {
   width: 100%;
   height: 100%;
   cursor: grab;
+  /* The game owns every gesture: no browser scroll/zoom on the board. */
+  touch-action: none;
 }
 
 .board canvas#board-canvas.dragging {
@@ -770,5 +783,249 @@ kbd {
   }
   100% {
     transform: translateY(108vh) rotate(680deg);
+  }
+}
+
+/* ==================== mobile-first adaptations ==================== */
+
+/* Touch ergonomics: fingers need 44px targets and get no hover states. */
+@media (pointer: coarse) {
+  button {
+    min-height: 44px;
+  }
+
+  .icon-btn {
+    width: 44px;
+  }
+
+  input[type='number'],
+  select {
+    min-height: 40px;
+  }
+
+  .actions button {
+    min-height: 46px;
+  }
+
+  /* Hover-only affordances don't exist under a finger. */
+  .forecast {
+    display: none !important;
+  }
+
+  .end-turn kbd,
+  .panel-fold {
+    display: none;
+  }
+}
+
+/* Compact layout: phones portrait AND landscape (wide but short). */
+@media (max-width: 760px), (max-height: 480px) {
+  body {
+    font-size: 13px;
+  }
+
+  /* --- top bar: one dense row, settings behind ⚙ --- */
+  .topbar {
+    padding: 0.4rem 0.6rem;
+    padding-top: calc(0.4rem + env(safe-area-inset-top));
+    gap: 0.5rem;
+  }
+
+  /* The player chip identifies the match; the wordmark yields the space. */
+  .brand {
+    display: none;
+  }
+
+  .topbar__center {
+    gap: 0.5rem;
+    flex: 1;
+    justify-content: flex-start;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .topbar__center .stat {
+    white-space: nowrap;
+    font-size: 0.78rem;
+  }
+
+  .topbar__right {
+    position: relative;
+    flex-shrink: 0;
+    gap: 0.4rem;
+  }
+
+  .chip {
+    padding: 0.18rem 0.6rem;
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+
+  .config-btn {
+    display: inline-block;
+  }
+
+  .topbar__config {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0.5rem;
+    z-index: 30;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+    padding: 0.8rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--line-strong);
+    background: var(--glass);
+    backdrop-filter: blur(12px);
+    box-shadow: var(--shadow);
+  }
+
+  .topbar__config.open {
+    display: flex;
+    animation: panel-in 0.2s var(--ease-pop);
+  }
+
+  .topbar__config .field {
+    justify-content: space-between;
+  }
+
+  /* --- the world takes the full screen; the inspector becomes a sheet --- */
+  .content {
+    flex-direction: column;
+  }
+
+  .inspector {
+    /* Bottom sheet: hidden until a unit or city is selected. */
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 44vh;
+    z-index: 10;
+    border-left: none;
+    border-top: 1px solid var(--line-strong);
+    border-radius: 18px 18px 0 0;
+    padding: 0.7rem 0.8rem calc(0.8rem + env(safe-area-inset-bottom));
+    transform: translateY(105%);
+    transition: transform 0.28s var(--ease-pop);
+    box-shadow: 0 -12px 32px rgba(4, 6, 12, 0.45);
+  }
+
+  body.sheet-open .inspector {
+    transform: translateY(0);
+  }
+
+  /* Grab handle so the sheet reads as a sheet. */
+  .inspector::before {
+    content: '';
+    align-self: center;
+    width: 38px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--line-strong);
+    flex-shrink: 0;
+  }
+
+  /* --- floating instruments make room for thumbs --- */
+  #minimap {
+    left: auto;
+    right: 10px;
+    top: 10px;
+    bottom: auto;
+    width: 92px;
+    height: 92px;
+    padding: 3px;
+  }
+
+  .event-log {
+    left: 8px;
+    bottom: calc(86px + env(safe-area-inset-bottom));
+    max-width: 64vw;
+    font-size: 0.7rem;
+  }
+
+  .event-log .entry {
+    padding: 0.2rem 0.5rem;
+  }
+
+  body.sheet-open .event-log {
+    display: none;
+  }
+
+  .end-turn {
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    padding: 0.85rem 1.2rem;
+    border-radius: 999px;
+    z-index: 11;
+  }
+
+  /* With a selection open the unit IS the primary action; the turn button
+     returns the moment the sheet closes (tap on empty ground). */
+  body.sheet-open .end-turn {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(10px);
+  }
+
+  .end-turn {
+    transition:
+      opacity 0.2s ease,
+      transform 0.25s var(--ease-pop);
+  }
+
+  .turn-banner {
+    top: 12%;
+    font-size: 1.05rem;
+    padding: 0.6rem 1.6rem;
+    white-space: nowrap;
+  }
+
+  .toast {
+    top: 10px;
+    max-width: 92vw;
+    font-size: 0.8rem;
+    text-align: center;
+  }
+
+  /* --- overlays breathe on small screens --- */
+  .overlay .card {
+    width: min(560px, 100vw - 16px);
+    max-height: calc(100vh - 24px);
+    padding: 1.1rem;
+    border-radius: 16px;
+  }
+
+  .victory-title {
+    font-size: 1.3rem;
+  }
+
+  .scoreboard {
+    flex-direction: column;
+  }
+
+  .victory-map {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+/* Very short landscape phones: the sheet docks right, thumbs keep the map. */
+@media (max-width: 900px) and (max-height: 480px) {
+  .inspector {
+    max-height: 70vh;
+  }
+
+  body.sheet-open .inspector {
+    max-width: 340px;
+    left: auto;
+    border-radius: 18px 0 0 0;
+  }
+
+  .event-log {
+    bottom: calc(70px + env(safe-area-inset-bottom));
   }
 }

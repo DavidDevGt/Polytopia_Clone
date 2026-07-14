@@ -112,7 +112,26 @@ redondeadas, `currentColor`. Estrella (economía), espada (ataque), escudo
 (defensa), flecha (movimiento), diana (alcance), corazón (vida), personas
 (población), bandera (captura), casa (ciudad). Prohibido mezclar estilos.
 
-## 7. HUD
+## 7. HUD — mobile first
+
+El juego se diseña para un teléfono en la mano; el escritorio es la versión
+ensanchada, nunca al revés.
+
+- **El pulgar manda**: todo control táctil mide ≥ 44 px; el botón de turno es
+  una píldora dorada en la zona del pulgar derecho, con `safe-area-inset`.
+- **Gestos nativos**: un dedo toca (seleccionar/mover/atacar) o arrastra
+  (paneo); dos dedos pellizcan (zoom) y panean por su punto medio. Todo por
+  Pointer Events — el mismo código sirve mouse, lápiz y dedo. El navegador
+  no recibe ningún gesto (`touch-action: none`).
+- **El inspector es una bottom sheet**: aparece solo cuando hay unidad o
+  ciudad seleccionada, con asa de arrastre, y se retira al tocar el vacío.
+  En landscape se acopla a la derecha. Mientras está abierta, la selección
+  es la acción primaria: el botón de turno se aparta.
+- **Ajustes tras ⚙**: semilla, modo y nueva partida viven en un desplegable;
+  la barra superior solo lleva chip de jugador, turno y estrellas.
+- Sin hover no hay pronóstico flotante ni atajos de teclado: esa capa solo
+  existe en escritorio (`pointer: coarse` la apaga).
+- El copy dice «toca», nunca «haz clic».
 
 - **Jerarquía**: (1) el mundo, (2) el botón dorado de turno, (3) la barra de
   estado, (4) el inspector. Nada compite con el tablero: paneles de cristal
